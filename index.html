@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#111b25">
-  <meta name="description" content="Un diario personale per tenere traccia di sigarette e canne. I dati restano sul dispositivo.">
+  <meta name="description" content="Un diario personale per tenere traccia di sigarette e canne, con sincronizzazione privata tramite account.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="SmokeLog">
@@ -24,7 +24,7 @@
           <h1>Smoke<span>Log</span></h1>
         </div>
       </div>
-      <div class="privacy-chip"><span class="privacy-dot"></span><span>Solo sul dispositivo</span></div>
+      <div class="privacy-chip"><span class="privacy-dot"></span><span id="privacy-label">Solo sul dispositivo</span></div>
     </header>
 
     <main>
@@ -132,7 +132,32 @@
       <details class="data-tools">
         <summary><span class="settings-summary-icon" aria-hidden="true">↕</span><span><strong>Backup e gestione dati</strong><small>Esporta, ripristina o elimina lo storico</small></span><span class="summary-chevron" aria-hidden="true">⌄</span></summary>
         <div class="data-tools-content">
-          <p>Le registrazioni sono conservate in memoria locale nel browser di questo dispositivo. Esporta periodicamente un backup se vuoi conservarle nel tempo o trasferirle.</p>
+          <h3>Account e sincronizzazione</h3>
+          <p>Accedi allo stesso account da ogni dispositivo: lo storico viene conservato nel database online e ricaricato quando apri l’app. La password non viene salvata da SmokeLog. I dati sono riservati al tuo account, ma non sono cifrati end-to-end.</p>
+          <p id="account-status" role="status" aria-live="polite">Verifica configurazione account…</p>
+          <div class="account-fields">
+            <label for="account-email">Email</label>
+            <input id="account-email" type="email" autocomplete="username" required>
+            <label for="account-password">Password</label>
+            <input id="account-password" type="password" autocomplete="current-password" minlength="6" required>
+          </div>
+          <div class="backup-buttons account-actions">
+            <button type="button" class="secondary-button" id="sign-in">Accedi</button>
+            <button type="button" class="secondary-button" id="sign-up">Crea account</button>
+            <button type="button" class="secondary-button" id="recover-password">Recupera password</button>
+            <button type="button" class="secondary-button" id="save-new-password" hidden>Imposta nuova password</button>
+          </div>
+          <div id="signed-in-controls" class="backup-buttons account-actions" hidden>
+            <button type="button" class="secondary-button" id="sign-out">Esci dall’account</button>
+          </div>
+          <p>Il reset del browser o del dispositivo elimina la sessione, non lo storico online: installa o apri SmokeLog e accedi di nuovo. Esporta comunque un backup JSON periodico.</p>
+          <h3>Archivio locale e backup</h3>
+          <p>Una copia locale viene mantenuta in questo browser per visualizzare lo storico. La protezione del browser dalla rimozione automatica non impedisce la cancellazione manuale dei dati del sito.</p>
+          <p id="storage-status" role="status" aria-live="polite">Controllo della protezione dell’archivio…</p>
+          <div class="backup-buttons">
+            <button type="button" class="secondary-button" id="protect-storage">Proteggi dati su questo dispositivo</button>
+          </div>
+          <p>Per avere anche una copia indipendente dall’account, esporta un backup JSON e salvalo in un luogo sicuro.</p>
           <div class="backup-buttons">
             <button type="button" class="secondary-button" id="export-json">Esporta backup JSON</button>
             <button type="button" class="secondary-button" id="export-csv">Esporta CSV</button>
@@ -150,12 +175,13 @@
     <footer class="app-footer">
       <span class="footer-mark">S·L</span>
       <p>Un dato alla volta. Senza giudizi.</p>
-      <p class="footer-privacy"><span class="privacy-dot"></span> Nessun account · Nessun server dati</p>
+      <p class="footer-privacy"><span class="privacy-dot"></span> <span id="footer-privacy-label">Solo sul dispositivo · Nessun analytics</span></p>
       <p class="version-label">SmokeLog · versione 1.0</p>
     </footer>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="./supabase-config.js" defer></script>
   <script src="./app.js" defer></script>
 </body>
 </html>

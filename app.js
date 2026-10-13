@@ -4,11 +4,23 @@ const DB_NAME = 'smokelog-local-db';
 const DB_VERSION = 1;
 const STORE_NAME = 'events';
 const MAX_RECENT_EVENTS = 10;
+const CLOUD_BATCH_SIZE = 500;
+const CLOUD_SESSION_KEY = 'smokelog-supabase-session';
+const LAST_SYNC_USER_KEY = 'smokelog-last-sync-user';
 
 let database;
 let events = [];
 let activeRange = 'day';
 let toastTimer;
+let cloudSession = null;
+let isPasswordRecovery = false;
+
+const supabaseConfig = window.SMOKELOG_SUPABASE_CONFIG || {};
+const cloudConfigured = typeof supabaseConfig.url === 'string'
+  && /^https:\/\/.+\.supabase\.co\/?$/.test(supabaseConfig.url)
+  && typeof supabaseConfig.anonKey === 'string'
+  && supabaseConfig.anonKey.length > 20
+  && !supabaseConfig.anonKey.includes('YOUR_');
 
 const elements = {
   currentDate: document.getElementById('current-date'),
@@ -28,8 +40,322 @@ const elements = {
   historyCount: document.getElementById('history-count'),
   historyFootnote: document.getElementById('history-footnote'),
   toast: document.getElementById('toast'),
-  importFile: document.getElementById('import-file')
+  importFile: document.getElementById('import-file'),
+  storageStatus: document.getElementById('storage-status'),
+  accountStatus: document.getElementById('account-status'),
+  accountEmail: document.getElementById('account-email'),
+  accountPassword: document.getElementById('account-password'),
+  signIn: document.getElementById('sign-in'),
+  signUp: document.getElementById('sign-up'),
+  recoverPassword: document.getElementById('recover-password'),
+  saveNewPassword: document.getElementById('save-new-password'),
+  signOut: document.getElementById('sign-out'),
+  signedInControls: document.getElementById('signed-in-controls'),
+  privacyLabel: document.getElementById('privacy-label'),
+  footerPrivacyLabel: document.getElementById('footer-privacy-label')
 };
+
+function setAccountStatus(message, isError = false) {
+  elements.accountStatus.textContent = message;
+  elements.accountStatus.classList.toggle('is-error', isError);
+}
+
+function updateAccountControls() {
+  const signedIn = Boolean(cloudSession);
+  elements.privacyLabel.textContent = !cloudConfigured
+    ? 'Solo sul dispositivo'
+    : signedIn ? 'Account attivo' : 'Accedi per sincronizzare';
+  elements.footerPrivacyLabel.textContent = cloudConfigured
+    ? 'Account personale · Nessun analytics'
+    : 'Solo sul dispositivo · Nessun analytics';
+  elements.signedInControls.hidden = !cloudSession;
+  elements.signOut.hidden = !signedIn || isPasswordRecovery;
+  elements.signIn.hidden = signedIn || isPasswordRecovery;
+  elements.signUp.hidden = signedIn || isPasswordRecovery;
+  elements.recoverPassword.hidden = signedIn || isPasswordRecovery;
+  elements.saveNewPassword.hidden = !isPasswordRecovery;
+  elements.accountEmail.disabled = signedIn;
+  elements.accountPassword.disabled = signedIn && !isPasswordRecovery;
+  elements.accountPassword.autocomplete = isPasswordRecovery ? 'new-password' : 'current-password';
+  document.getElementById('add-cigarette').disabled = cloudConfigured && !cloudSession;
+  document.getElementById('add-joint').disabled = cloudConfigured && !cloudSession;
+}
+
+function saveCloudSession(session) {
+  cloudSession = {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    expires_at: session.expires_at || Math.floor(Date.now() / 1000) + (session.expires_in || 3600),
+    user: session.user
+  };
+  localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(cloudSession));
+  updateAccountControls();
+}
+
+function clearCloudSession() {
+  cloudSession = null;
+  localStorage.removeItem(CLOUD_SESSION_KEY);
+  updateAccountControls();
+}
+
+async function supabaseAuthRequest(path, body, accessToken) {
+  const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: supabaseConfig.anonKey,
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+    },
+    body: JSON.stringify(body)
+  });
+  const responseText = await response.text();
+  let result = {};
+  if (responseText) {
+    try {
+      result = JSON.parse(responseText);
+    } catch {
+      throw new Error(`Risposta di autenticazione non valida (HTTP ${response.status}).`);
+    }
+  }
+  if (!response.ok) {
+    throw new Error(result.msg || result.message || result.error_description || result.error || `Richiesta di autenticazione non riuscita (HTTP ${response.status}).`);
+  }
+  return result;
+}
+
+async function supabaseRequest(path, options = {}, retry = true) {
+  const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: supabaseConfig.anonKey,
+      Authorization: `Bearer ${cloudSession.access_token}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  if (response.status === 401 && retry && cloudSession.refresh_token) {
+    const refreshed = await supabaseAuthRequest('token?grant_type=refresh_token', { refresh_token: cloudSession.refresh_token });
+    saveCloudSession(refreshed);
+    return supabaseRequest(path, options, false);
+  }
+  const responseText = await response.text();
+  let result = null;
+  if (responseText) {
+    try {
+      result = JSON.parse(responseText);
+    } catch {
+      throw new Error(`Risposta del database non valida (HTTP ${response.status}).`);
+    }
+  }
+  if (!response.ok) {
+    throw new Error((result && (result.message || result.details || result.hint)) || `Operazione cloud non riuscita (HTTP ${response.status}).`);
+  }
+  return result;
+}
+
+async function uploadCloudEvents(source) {
+  for (let start = 0; start < source.length; start += CLOUD_BATCH_SIZE) {
+    const rows = source.slice(start, start + CLOUD_BATCH_SIZE).map(event => ({
+      id: event.id,
+      user_id: cloudSession.user.id,
+      type: event.type,
+      timestamp: event.timestamp
+    }));
+    await supabaseRequest('smokelog_events?on_conflict=id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(rows)
+    });
+  }
+}
+
+async function fetchCloudEvents() {
+  const eventsFromCloud = [];
+  for (let start = 0; ; start += CLOUD_BATCH_SIZE) {
+    const rows = await supabaseRequest('smokelog_events?select=id,type,timestamp&order=timestamp.asc', {
+      headers: {
+        Range: `${start}-${start + CLOUD_BATCH_SIZE - 1}`,
+        'Range-Unit': 'items'
+      }
+    });
+    eventsFromCloud.push(...rows.map(row => ({ id: row.id, type: row.type, timestamp: row.timestamp })));
+    if (rows.length < CLOUD_BATCH_SIZE) break;
+  }
+  return eventsFromCloud;
+}
+
+async function syncCloudEvents() {
+  const localEvents = (await readAllEvents()).map(event => {
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.id)) return event;
+    return { ...event, id: makeId() };
+  });
+  const remoteEvents = await fetchCloudEvents();
+  const previousUserId = localStorage.getItem(LAST_SYNC_USER_KEY);
+  if (previousUserId && previousUserId !== cloudSession.user.id && localEvents.length > 0) {
+    const approved = window.confirm('Questo dispositivo contiene uno storico locale sincronizzato con un altro account. Vuoi sostituirlo con i dati dell’account a cui hai appena effettuato l’accesso? Esporta prima un backup JSON per conservarlo.');
+    if (!approved) {
+      clearCloudSession();
+      throw new Error('Accesso annullato: lo storico locale è rimasto invariato.');
+    }
+  }
+
+  let nextEvents = remoteEvents;
+  if (!previousUserId && localEvents.length > 0) {
+    const byId = new Map(remoteEvents.map(event => [event.id, event]));
+    for (const event of localEvents) byId.set(event.id, event);
+    nextEvents = [...byId.values()];
+    await uploadCloudEvents(localEvents);
+  }
+  await replaceAllEvents(nextEvents);
+  events = [...nextEvents].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  render();
+  localStorage.setItem(LAST_SYNC_USER_KEY, cloudSession.user.id);
+  setAccountStatus(`Sincronizzato con l’account ${cloudSession.user.email}.`);
+}
+
+async function handleSignIn() {
+  if (!elements.accountEmail.reportValidity() || !elements.accountPassword.reportValidity()) return;
+  try {
+    const result = await supabaseAuthRequest('token?grant_type=password', {
+      email: elements.accountEmail.value.trim(),
+      password: elements.accountPassword.value
+    });
+    saveCloudSession(result);
+    await syncCloudEvents();
+    elements.accountPassword.value = '';
+  } catch (error) {
+    console.error(error);
+    setAccountStatus(error.message || 'Accesso non riuscito.', true);
+  }
+}
+
+async function handleSignUp() {
+  if (!elements.accountEmail.reportValidity() || !elements.accountPassword.reportValidity()) return;
+  try {
+    const result = await supabaseAuthRequest('signup', {
+      email: elements.accountEmail.value.trim(),
+      password: elements.accountPassword.value,
+      options: { emailRedirectTo: location.href.split('#')[0] }
+    });
+    if (result.access_token) {
+      saveCloudSession(result);
+      await syncCloudEvents();
+      elements.accountPassword.value = '';
+      return;
+    }
+    elements.accountPassword.value = '';
+    setAccountStatus('Account creato. Controlla la posta e conferma l’indirizzo email, poi accedi.');
+  } catch (error) {
+    console.error(error);
+    setAccountStatus(error.message || 'Creazione account non riuscita.', true);
+  }
+}
+
+async function handlePasswordRecovery() {
+  if (!elements.accountEmail.reportValidity()) return;
+  try {
+    const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/recover?redirect_to=${encodeURIComponent(location.href.split('#')[0])}`, {
+      method: 'POST',
+      headers: { apikey: supabaseConfig.anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: elements.accountEmail.value.trim() })
+    });
+    if (!response.ok) throw new Error(`Richiesta di recupero non riuscita (HTTP ${response.status}).`);
+    setAccountStatus('Se l’indirizzo è registrato, riceverai un link per impostare una nuova password.');
+  } catch (error) {
+    console.error(error);
+    setAccountStatus(error.message || 'Richiesta di recupero non riuscita.', true);
+  }
+}
+
+async function handleSaveNewPassword() {
+  if (!elements.accountPassword.reportValidity() || !cloudSession) return;
+  try {
+    const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/user`, {
+      method: 'PUT',
+      headers: {
+        apikey: supabaseConfig.anonKey,
+        Authorization: `Bearer ${cloudSession.access_token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ password: elements.accountPassword.value })
+    });
+    if (!response.ok) throw new Error(`Aggiornamento password non riuscito (HTTP ${response.status}).`);
+    elements.accountPassword.value = '';
+    isPasswordRecovery = false;
+    updateAccountControls();
+    setAccountStatus('Password aggiornata. Lo storico resta associato al tuo account.');
+  } catch (error) {
+    console.error(error);
+    setAccountStatus(error.message || 'Aggiornamento password non riuscito.', true);
+  }
+}
+
+async function handleSignOut() {
+  try {
+    await supabaseAuthRequest('logout', {}, cloudSession.access_token);
+    clearCloudSession();
+    await clearAllEvents();
+    events = [];
+    render();
+    setAccountStatus('Disconnesso. Lo storico remoto è conservato nel tuo account.');
+  } catch (error) {
+    console.error(error);
+    setAccountStatus(error.message || 'Disconnessione non riuscita.', true);
+  }
+}
+
+async function restoreCloudSession() {
+  let stored = localStorage.getItem(CLOUD_SESSION_KEY);
+  const returnedParams = new URLSearchParams(location.hash.slice(1));
+  isPasswordRecovery = returnedParams.get('type') === 'recovery';
+  const returnedAccessToken = returnedParams.get('access_token');
+  const returnedRefreshToken = returnedParams.get('refresh_token');
+  if (returnedAccessToken && returnedRefreshToken) {
+    saveCloudSession({
+      access_token: returnedAccessToken,
+      refresh_token: returnedRefreshToken,
+      expires_in: Number(returnedParams.get('expires_in')) || 3600,
+      user: {}
+    });
+    history.replaceState(null, '', `${location.pathname}${location.search}`);
+    stored = localStorage.getItem(CLOUD_SESSION_KEY);
+  }
+  if (!stored) {
+    setAccountStatus('Accedi o crea un account per sincronizzare lo storico online.');
+    return;
+  }
+  try {
+    const session = JSON.parse(stored);
+    if (!session.access_token || !session.refresh_token || !session.user || !session.user.id) {
+      throw new Error('Sessione locale non valida.');
+    }
+    cloudSession = session;
+    updateAccountControls();
+    if (session.expires_at < Math.floor(Date.now() / 1000) + 60) {
+      saveCloudSession(await supabaseAuthRequest('token?grant_type=refresh_token', { refresh_token: session.refresh_token }));
+    }
+    const user = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/user`, {
+      headers: {
+        apikey: supabaseConfig.anonKey,
+        Authorization: `Bearer ${cloudSession.access_token}`
+      }
+    });
+    if (!user.ok) throw new Error(`Verifica dell’account non riuscita (HTTP ${user.status}).`);
+    cloudSession.user = await user.json();
+    saveCloudSession(cloudSession);
+    await syncCloudEvents();
+    if (isPasswordRecovery) setAccountStatus('Imposta una nuova password per il tuo account.');
+  } catch (error) {
+    console.error(error);
+    if (cloudSession && localStorage.getItem(LAST_SYNC_USER_KEY) === cloudSession.user.id) {
+      events = await readAllEvents();
+      render();
+      setAccountStatus(`Connessione cloud non disponibile. È mostrata la copia locale del ${cloudSession.user.email}; le modifiche richiedono la connessione.`, true);
+      return;
+    }
+    setAccountStatus(error.message || 'Impossibile ripristinare la sessione cloud.', true);
+  }
+}
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -104,7 +430,11 @@ async function clearAllEvents() {
 
 function makeId() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function localDateKey(date) {
@@ -345,8 +675,17 @@ function showToast(message) {
 }
 
 async function handleAddEvent(type) {
+  if (cloudConfigured && !cloudSession) {
+    showToast('Accedi per salvare e sincronizzare le registrazioni.');
+    return;
+  }
+  let uploaded = false;
   try {
     const event = { id: makeId(), type, timestamp: new Date().toISOString() };
+    if (cloudConfigured) {
+      await uploadCloudEvents([event]);
+      uploaded = true;
+    }
     await persistEvent(event);
     events.push(event);
     events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -354,14 +693,21 @@ async function handleAddEvent(type) {
     showToast(type === 'cigarette' ? 'Sigaretta registrata.' : 'Canna registrata.');
   } catch (error) {
     console.error(error);
-    showToast('Non sono riuscito a salvare. Esporta o verifica i dati del browser.');
+    showToast(uploaded ? 'Salvata online; aggiornamento locale non riuscito.' : 'Non salvata online: verifica la connessione e riprova.');
   }
 }
 
 async function handleDeleteEvent(event) {
+  if (cloudConfigured && !cloudSession) {
+    showToast('Accedi per gestire lo storico sincronizzato.');
+    return;
+  }
   const typeLabel = event.type === 'cigarette' ? 'la sigaretta' : 'la canna';
   if (!window.confirm(`Vuoi eliminare ${typeLabel} registrata il ${formatDateTime(event.timestamp)}?`)) return;
   try {
+    if (cloudConfigured) {
+      await supabaseRequest(`smokelog_events?id=eq.${encodeURIComponent(event.id)}`, { method: 'DELETE' });
+    }
     await removeEvent(event.id);
     events = events.filter(item => item.id !== event.id);
     render();
@@ -432,7 +778,8 @@ function validateBackup(parsed) {
     let id = item.id;
     if (seen.has(id)) id = makeId();
     seen.add(id);
-    validated.push({ id, type: item.type, timestamp: new Date(item.timestamp).toISOString() });
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : makeId();
+    validated.push({ id: uuid, type: item.type, timestamp: new Date(item.timestamp).toISOString() });
   }
   return validated;
 }
@@ -440,11 +787,18 @@ function validateBackup(parsed) {
 async function importJsonFile(file) {
   if (!file) return;
   try {
+    if (cloudConfigured && !cloudSession) throw new Error('Accedi prima di importare nello storico sincronizzato.');
     const raw = await file.text();
     const parsed = JSON.parse(raw);
     const validated = validateBackup(parsed);
     const approved = window.confirm(`Il backup contiene ${validated.length} registrazioni. Importandolo, lo storico attuale verrà sostituito. Prima di continuare, esporta un backup se vuoi conservare i dati attuali. Procedere?`);
     if (!approved) return;
+    if (cloudConfigured) {
+      await supabaseRequest('rpc/replace_smokelog_events', {
+        method: 'POST',
+        body: JSON.stringify({ p_events: validated })
+      });
+    }
     await replaceAllEvents(validated);
     events = await readAllEvents();
     render();
@@ -458,6 +812,10 @@ async function importJsonFile(file) {
 }
 
 async function handleClearData() {
+  if (cloudConfigured && !cloudSession) {
+    showToast('Accedi per gestire lo storico sincronizzato.');
+    return;
+  }
   if (events.length === 0) {
     showToast('Non ci sono registrazioni da eliminare.');
     return;
@@ -465,6 +823,9 @@ async function handleClearData() {
   const approved = window.confirm(`Stai per eliminare tutte le ${events.length} registrazioni salvate su questo dispositivo. L’azione non si può annullare. Hai già esportato un backup, se necessario?`);
   if (!approved) return;
   try {
+    if (cloudConfigured) {
+      await supabaseRequest(`smokelog_events?user_id=eq.${encodeURIComponent(cloudSession.user.id)}`, { method: 'DELETE' });
+    }
     await clearAllEvents();
     events = [];
     render();
@@ -472,6 +833,42 @@ async function handleClearData() {
   } catch (error) {
     console.error(error);
     showToast('Non è stato possibile eliminare lo storico.');
+  }
+}
+
+async function updateStorageStatus() {
+  if (!navigator.storage || typeof navigator.storage.persisted !== 'function') {
+    elements.storageStatus.textContent = 'Questo browser non permette a SmokeLog di richiedere la protezione dell’archivio. Conserva periodicamente un backup JSON.';
+    return;
+  }
+
+  try {
+    const isPersistent = await navigator.storage.persisted();
+    elements.storageStatus.textContent = isPersistent
+      ? 'Protezione attiva: il browser non dovrebbe rimuovere automaticamente questi dati. La cancellazione manuale dei dati del sito può comunque eliminarli.'
+      : 'La protezione non è attiva: il browser potrebbe rimuovere i dati in alcune circostanze. Esporta periodicamente un backup JSON.';
+  } catch (error) {
+    console.error(error);
+    elements.storageStatus.textContent = 'Non è stato possibile verificare la protezione dell’archivio. Conserva periodicamente un backup JSON.';
+  }
+}
+
+async function requestStoragePersistence() {
+  if (!navigator.storage || typeof navigator.storage.persist !== 'function') {
+    showToast('Questo browser non supporta la protezione dell’archivio.');
+    return;
+  }
+
+  try {
+    const isPersistent = await navigator.storage.persist();
+    elements.storageStatus.textContent = isPersistent
+      ? 'Protezione attiva: il browser non dovrebbe rimuovere automaticamente questi dati. La cancellazione manuale dei dati del sito può comunque eliminarli.'
+      : 'Il browser non ha attivato la protezione. Esporta periodicamente un backup JSON.';
+    showToast(isPersistent ? 'Protezione dell’archivio attivata.' : 'Protezione non attivata: crea un backup JSON.');
+  } catch (error) {
+    console.error(error);
+    elements.storageStatus.textContent = 'Non è stato possibile attivare la protezione. Conserva periodicamente un backup JSON.';
+    showToast('Richiesta di protezione non riuscita.');
   }
 }
 
@@ -494,17 +891,35 @@ function setupEventHandlers() {
   document.getElementById('import-json').addEventListener('click', () => elements.importFile.click());
   elements.importFile.addEventListener('change', () => importJsonFile(elements.importFile.files && elements.importFile.files[0]));
   document.getElementById('clear-data').addEventListener('click', handleClearData);
+  document.getElementById('protect-storage').addEventListener('click', requestStoragePersistence);
+  elements.signIn.addEventListener('click', handleSignIn);
+  elements.signUp.addEventListener('click', handleSignUp);
+  elements.recoverPassword.addEventListener('click', handlePasswordRecovery);
+  elements.saveNewPassword.addEventListener('click', handleSaveNewPassword);
+  elements.signOut.addEventListener('click', handleSignOut);
 }
 
 async function init() {
   setupEventHandlers();
+  updateAccountControls();
   try {
     await openDatabase();
     events = await readAllEvents();
+    if (cloudConfigured) events = [];
     render();
+    await updateStorageStatus();
   } catch (error) {
     console.error(error);
     window.alert(`SmokeLog non riesce ad aprire l’archivio locale. Prova con una versione recente di Safari o di un browser compatibile. Dettaglio: ${error.message || 'errore sconosciuto'}`);
+  }
+
+  if (cloudConfigured) {
+    await restoreCloudSession();
+  } else {
+    elements.signIn.hidden = true;
+    elements.signUp.hidden = true;
+    elements.recoverPassword.hidden = true;
+    setAccountStatus('Sincronizzazione non configurata. Completa la configurazione Supabase descritta nel README.');
   }
 
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {

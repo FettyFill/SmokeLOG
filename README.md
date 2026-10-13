@@ -1,78 +1,62 @@
 # SmokeLog — diario personale
 
-Una piccola Progressive Web App (PWA) per registrare separatamente sigarette e canne. È realizzata con HTML, CSS e JavaScript senza framework, account, analytics, CDN o backend.
+Una Progressive Web App (PWA) per registrare separatamente sigarette e canne. L'interfaccia è realizzata con HTML, CSS e JavaScript senza framework. Con la configurazione Supabase, account e database online permettono di ritrovare lo stesso storico da browser e dispositivi diversi.
 
-## Funzionalità incluse
+## Funzionalità
 
-- Pulsante per aggiungere una sigaretta e pulsante per aggiungere una canna.
-- Salvataggio locale di ogni evento con data e ora.
+- Registrazione di sigarette e canne con data e ora.
 - Contatori per oggi, ultimi 7 giorni, mese corrente e anno corrente.
 - Grafico riepilogativo per fascia oraria, giorno, settimana del mese o mese dell'anno.
-- Ultime 10 registrazioni con possibilità di eliminare un evento errato.
-- Esportazione dello storico in JSON (backup ripristinabile) e CSV.
-- Importazione di un backup JSON, con conferma prima di sostituire i dati correnti.
-- Cancellazione completa dello storico, con conferma.
-- Manifest, icone e service worker per installazione in Home e apertura offline dopo il primo caricamento riuscito.
+- Ultime 10 registrazioni, con possibilità di eliminare un evento.
+- Esportazione JSON (backup ripristinabile) e CSV; importazione JSON e cancellazione completa dello storico.
+- Account email/password e sincronizzazione dello storico con Supabase.
+- Manifest, icone e service worker per installazione e caricamento dell'interfaccia offline.
+
+## Configurare Supabase
+
+La sincronizzazione non è attiva finché non configuri un progetto Supabase. Non inserire mai la `service_role` key nel sito: il repository è pubblico. Il codice del browser usa solo la chiave pubblica anon/publishable; l'accesso ai dati è limitato dalle policy Row Level Security.
+
+1. Crea un progetto su [Supabase](https://supabase.com/) e copia il suo **Project URL** e la chiave **publishable** (o `anon` legacy) dalle impostazioni API.
+2. In Supabase apri **SQL Editor**, esegui il contenuto di [`supabase-schema.sql`](./supabase-schema.sql). Crea la tabella, le policy che isolano i dati per account e la funzione usata per sostituire lo storico durante il ripristino di un backup.
+3. In **Authentication → URL Configuration**, imposta come **Site URL** l'indirizzo GitHub Pages, ad esempio `https://fettyfill.github.io/SmokeLOG/`, e aggiungi lo stesso indirizzo tra i redirect consentiti. Per provare localmente aggiungi anche l'indirizzo HTTPS o `http://localhost` usato dal server locale.
+4. Inserisci URL e chiave pubblica in [`supabase-config.js`](./supabase-config.js), sostituendo i valori segnaposto.
+5. Pubblica tutti i file, incluso `supabase-config.js` e `supabase-schema.sql`, su GitHub Pages. La chiave publishable/anon è visibile nel browser per definizione: **non** è una password e non va confusa con la `service_role` key.
+6. Apri il sito, crea un account con la tua email, conferma l'indirizzo dal messaggio ricevuto se richiesto e accedi. Da un altro dispositivo usa lo stesso account per caricare lo storico.
+
+Se abiliti la conferma email, il link deve riportare all'indirizzo GitHub Pages configurato. Le registrazioni aggiunte, cancellate o importate mentre si è autenticati sono sincronizzate sul database online; serve una connessione internet per scrivere o aggiornare lo storico cloud. L'archivio locale IndexedDB è una copia di appoggio, non la copia autorevole.
 
 ## Aprire il progetto in Visual Studio Code
 
-1. Estrai la cartella `smokelog-pwa` in una posizione comoda.
-2. Apri Visual Studio Code e scegli **File → Apri cartella…**; seleziona `smokelog-pwa`.
-3. Per un'anteprima locale, installa l'estensione **Live Server** di Ritwick Dey (oppure usa un server statico equivalente) e avvia `index.html` con Live Server.
-4. Dal PC apri l'indirizzo locale proposto da Live Server. I dati di prova resteranno nel browser e nell'origine locale che stai usando.
+1. Apri in VS Code la cartella `smokelog-pwa`.
+2. Avvia `index.html` con Live Server o un server statico equivalente.
+3. Configura URL e chiave Supabase prima di provare account e sincronizzazione. L'accesso via `file://` non è una prova valida per service worker e PWA.
 
-> Aprire `index.html` facendo doppio clic (URL `file://`) non è una prova completa: service worker e installazione PWA richiedono HTTPS o un ambiente locale come `localhost`.
+## Pubblicare con GitHub Pages e installare su iPhone
 
-## Pubblicarla gratis per usarla su iPhone e condividerla
-
-Questa versione è una PWA statica. Puoi distribuire gli stessi file tramite GitHub Pages o un altro hosting statico HTTPS. Non è necessario configurare un server applicativo o un database.
-
-### Pubblicazione con GitHub Pages
-
-1. Crea un repository GitHub. Se vuoi la distribuzione gratuita più semplice, impostalo come **pubblico**: i file del progetto saranno visibili a chiunque, ma il codice non contiene le tue registrazioni personali.
-2. Carica nella radice del repository tutti i file e la cartella `icons` di questo progetto.
-3. Nel repository apri **Settings → Pages**.
-4. In **Build and deployment**, scegli la pubblicazione da un branch, seleziona `main` e la cartella `/ (root)`, quindi salva.
-5. Attendi la pubblicazione indicata da GitHub Pages e apri l'indirizzo HTTPS mostrato nelle impostazioni.
-6. Ogni volta che modifichi il codice in VS Code, esegui commit e push verso il repository; GitHub Pages pubblicherà la versione aggiornata. Anche un aggiornamento del service worker verrà rilevato dal browser.
-
-I percorsi nei file sono relativi, perciò la PWA può funzionare anche quando è pubblicata in una sottocartella come `https://utente.github.io/nome-repository/`.
-
-### Installarla su iPhone
-
-1. Apri il link HTTPS in **Safari** su iPhone.
-2. Tocca **Condividi**.
-3. Seleziona **Aggiungi alla schermata Home**.
-4. Lascia attivo **Apri come app web** se l'opzione viene mostrata, quindi tocca **Aggiungi**.
-5. Avvia SmokeLog dalla nuova icona. Aprila una prima volta mentre sei online, così il service worker può memorizzare i file per l'uso offline.
-
-I tuoi amici possono installarla allo stesso modo. Tutti useranno il medesimo codice pubblicato, ma ogni dispositivo avrà il proprio archivio locale separato.
+1. Carica nella radice del repository tutti i file e la cartella `icons`.
+2. In **Settings → Pages**, seleziona **Deploy from a branch**, il branch `main` e la cartella `/(root)`.
+3. Apri l'indirizzo HTTPS mostrato da GitHub Pages. Per un repository `SmokeLOG`, il percorso mantiene le maiuscole: `https://fettyfill.github.io/SmokeLOG/`.
+4. Su iPhone apri quel link in Safari, scegli **Condividi → Aggiungi alla schermata Home** e, se proposto, attiva **Apri come app web**.
+5. Per accedere ai dati dopo un reset o su un nuovo dispositivo, reinstalla/apri l'app e accedi con lo stesso account Supabase.
 
 ## Dove sono memorizzati i dati?
 
-Gli eventi sono salvati in **IndexedDB** nel profilo del browser/origine usata sul dispositivo. Il codice dell'app viene scaricato dall'hosting, ma l'app non invia le registrazioni a un server e non usa analytics o servizi esterni.
+Lo storico è salvato nel progetto Supabase e associato all'account autenticato; le policy RLS impediscono agli account di leggere o modificare gli eventi degli altri utenti. La connessione al servizio usa HTTPS. I dati **non** sono cifrati end-to-end: il progetto Supabase e i suoi amministratori possono tecnicamente accedere al database. SmokeLog non usa analytics né invia i dati a servizi diversi da Supabase per l'autenticazione e la sincronizzazione.
 
-Da ricordare:
-
-- Non esiste sincronizzazione automatica tra dispositivi.
-- I dati possono essere eliminati da chi cancella i dati del sito/browser o resetta il dispositivo. Usa periodicamente **Backup e gestione dati → Esporta backup JSON**.
-- L'importazione JSON sostituisce tutto lo storico attuale sul dispositivo, dopo una conferma. Esporta prima un backup se vuoi conservare entrambi gli archivi.
-- Il CSV è utile per consultare o elaborare lo storico in un foglio di calcolo, ma il JSON è il formato da usare per ripristinare i dati.
-- Un backup esportato può contenere abitudini personali: trattalo come un file privato.
-- Non usare la versione locale con URL `localhost` sul PC come se fosse il link da condividere: ogni dispositivo deve aprire l'indirizzo HTTPS pubblicato.
+- Cancellare cookie, dati del browser o resettare il dispositivo rimuove la sessione e la copia locale, ma non lo storico online. Accedi di nuovo al tuo account per recuperarlo.
+- Esporta comunque periodicamente **Backup e gestione dati → Esporta backup JSON** e conserva il file in un luogo sicuro, come copia indipendente dal servizio online.
+- Un backup JSON esportato contiene abitudini personali: trattalo come un file privato. Il CSV è utile per consultare lo storico, ma il JSON è il formato da usare per ripristinarlo.
+- L'importazione JSON sostituisce lo storico dell'account sincronizzato dopo una conferma. Esporta un backup prima se vuoi conservare i dati attuali.
+- Il pulsante **Esci dall'account** termina la sessione e rimuove la copia locale dal dispositivo; lo storico remoto resta nell'account.
 
 ## Personalizzazione
 
 - Interfaccia e colori: `style.css`.
 - Etichette e struttura della pagina: `index.html`.
-- Contatori, statistiche, database locale, import/export: `app.js`.
-- Nome, colori della schermata e icone installate: `manifest.webmanifest` e `icons/`.
-- Cache e comportamento offline: `service-worker.js`.
+- Database locale, autenticazione, sincronizzazione e import/export: `app.js`.
+- URL e chiave pubblica Supabase: `supabase-config.js`.
+- Tabella e policy di accesso: `supabase-schema.sql`.
+- Nome, colori e icone: `manifest.webmanifest` e `icons/`.
+- Cache e funzionamento offline dell'interfaccia: `service-worker.js`.
 
-Dopo aver modificato i file, prova sempre la versione in locale e verifica la versione pubblicata su iPhone. Se il browser continua a mostrare una versione precedente, chiudi e riapri la web app o ricarica la pagina; il service worker di questo progetto prova prima a caricare i file aggiornati e usa la cache quando è offline.
-
-## Limiti intenzionali di questa prima versione
-
-- Non crea account e non sincronizza i dati tra persone.
-- Non stima automaticamente quantità o contenuto: registra un evento per ogni tocco.
-- Mostra le ultime 10 registrazioni nella schermata principale; il backup JSON/CSV contiene l'intero storico.
+Se una versione aggiornata non appare, ricarica la pagina o chiudi e riapri la web app; il service worker scarica i file aggiornati e usa la cache quando l'interfaccia è offline. Le operazioni sullo storico cloud richiedono comunque una connessione.
