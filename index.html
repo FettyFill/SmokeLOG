@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111b25">
+  <meta name="description" content="Un diario personale per tenere traccia di sigarette e canne. I dati restano sul dispositivo.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SmokeLog">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="./style.css">
+  <title>SmokeLog · Il tuo diario</title>
+</head>
+<body>
+  <div class="app-frame">
+    <header class="topbar">
+      <div class="brand-lockup">
+        <img class="brand-icon" src="./icons/icon-192.png" alt="" width="44" height="44">
+        <div>
+          <p class="eyebrow">IL TUO DIARIO PERSONALE</p>
+          <h1>Smoke<span>Log</span></h1>
+        </div>
+      </div>
+      <div class="privacy-chip"><span class="privacy-dot"></span><span>Solo sul dispositivo</span></div>
+    </header>
+
+    <main>
+      <section class="today-card" aria-labelledby="today-heading">
+        <div class="today-topline">
+          <p class="eyebrow" id="today-date">OGGI</p>
+          <span class="date-label" id="current-date">—</span>
+        </div>
+        <h2 id="today-heading">Le tue registrazioni di oggi</h2>
+        <div class="today-total-line">
+          <span class="today-total" id="today-total">0</span>
+          <span class="today-total-label" id="today-total-label">registrazioni</span>
+        </div>
+        <div class="today-split" aria-live="polite">
+          <span><span class="mini-dot dot-cigarette"></span><strong id="today-cigarettes">0</strong> sigarette</span>
+          <span><span class="mini-dot dot-joint"></span><strong id="today-joints">0</strong> canne</span>
+        </div>
+        <div class="today-card-orb orb-one" aria-hidden="true"></div>
+        <div class="today-card-orb orb-two" aria-hidden="true"></div>
+      </section>
+
+      <section class="record-section" aria-labelledby="record-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">REGISTRA</p>
+            <h2 id="record-heading">Hai fumato?</h2>
+          </div>
+          <p class="section-note">Un tocco per aggiungere</p>
+        </div>
+        <div class="record-buttons">
+          <button class="record-button cigarette-button" id="add-cigarette" type="button">
+            <span class="record-symbol cigarette-symbol" aria-hidden="true"><span></span></span>
+            <span class="record-button-copy"><strong>Sigaretta</strong><small>Aggiungi una</small></span>
+            <span class="record-plus" aria-hidden="true">+</span>
+          </button>
+          <button class="record-button joint-button" id="add-joint" type="button">
+            <span class="record-symbol joint-symbol" aria-hidden="true"><span></span></span>
+            <span class="record-button-copy"><strong>Canna</strong><small>Aggiungi una</small></span>
+            <span class="record-plus" aria-hidden="true">+</span>
+          </button>
+        </div>
+        <p class="microcopy">Ogni tocco registra data e ora. Puoi correggere gli errori dallo storico.</p>
+      </section>
+
+      <section class="stats-section" aria-labelledby="stats-heading">
+        <div class="section-heading stats-title-row">
+          <div>
+            <p class="eyebrow">IL QUADRO GENERALE</p>
+            <h2 id="stats-heading">Le tue statistiche</h2>
+          </div>
+        </div>
+        <div class="range-switch" role="group" aria-label="Periodo delle statistiche">
+          <button type="button" class="range-button is-active" data-range="day" aria-pressed="true">Oggi</button>
+          <button type="button" class="range-button" data-range="week" aria-pressed="false">7 giorni</button>
+          <button type="button" class="range-button" data-range="month" aria-pressed="false">Mese</button>
+          <button type="button" class="range-button" data-range="year" aria-pressed="false">Anno</button>
+        </div>
+        <div class="stats-grid">
+          <article class="stat-card stat-total-card">
+            <span class="stat-label" id="period-label">Totale di oggi</span>
+            <div class="stat-value" id="period-total">0</div>
+            <span class="stat-footnote">registrazioni</span>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Sigarette</span>
+            <div class="stat-value cigarette-color" id="period-cigarettes">0</div>
+            <span class="stat-footnote">nel periodo</span>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Canne</span>
+            <div class="stat-value joint-color" id="period-joints">0</div>
+            <span class="stat-footnote">nel periodo</span>
+          </article>
+        </div>
+        <article class="chart-card">
+          <div class="chart-heading">
+            <div>
+              <h3 id="chart-title">Distribuzione di oggi</h3>
+              <p id="chart-subtitle">Per fascia oraria</p>
+            </div>
+            <span class="chart-total-pill" id="chart-total-pill">0 totali</span>
+          </div>
+          <div id="chart-bars" class="chart-bars" aria-label="Grafico delle registrazioni"></div>
+        </article>
+      </section>
+
+      <section class="history-section" aria-labelledby="history-heading">
+        <div class="section-heading history-heading-row">
+          <div>
+            <p class="eyebrow">ATTIVITÀ RECENTE</p>
+            <h2 id="history-heading">Ultime registrazioni</h2>
+          </div>
+          <span class="history-count" id="history-count">0 eventi</span>
+        </div>
+        <div class="history-card" id="history-list" aria-live="polite">
+          <div class="empty-state">
+            <span class="empty-icon" aria-hidden="true">＋</span>
+            <strong>Ancora nessuna registrazione</strong>
+            <p>Quando aggiungerai una sigaretta o una canna, la troverai qui.</p>
+          </div>
+        </div>
+        <p class="history-footnote" id="history-footnote">Vengono mostrate le 10 registrazioni più recenti.</p>
+      </section>
+
+      <details class="data-tools">
+        <summary><span class="settings-summary-icon" aria-hidden="true">↕</span><span><strong>Backup e gestione dati</strong><small>Esporta, ripristina o elimina lo storico</small></span><span class="summary-chevron" aria-hidden="true">⌄</span></summary>
+        <div class="data-tools-content">
+          <p>Le registrazioni sono conservate in memoria locale nel browser di questo dispositivo. Esporta periodicamente un backup se vuoi conservarle nel tempo o trasferirle.</p>
+          <div class="backup-buttons">
+            <button type="button" class="secondary-button" id="export-json">Esporta backup JSON</button>
+            <button type="button" class="secondary-button" id="export-csv">Esporta CSV</button>
+            <button type="button" class="secondary-button" id="import-json">Importa backup JSON</button>
+            <input type="file" id="import-file" accept=".json,application/json" hidden>
+          </div>
+          <div class="danger-zone">
+            <div><strong>Elimina tutte le registrazioni</strong><p>Questa azione non si può annullare. Esporta prima un backup se vuoi conservare lo storico.</p></div>
+            <button type="button" class="danger-button" id="clear-data">Elimina</button>
+          </div>
+        </div>
+      </details>
+    </main>
+
+    <footer class="app-footer">
+      <span class="footer-mark">S·L</span>
+      <p>Un dato alla volta. Senza giudizi.</p>
+      <p class="footer-privacy"><span class="privacy-dot"></span> Nessun account · Nessun server dati</p>
+      <p class="version-label">SmokeLog · versione 1.0</p>
+    </footer>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="./app.js" defer></script>
+</body>
+</html>
