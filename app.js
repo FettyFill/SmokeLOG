@@ -29,6 +29,7 @@ let authRestorePromise = null;
 let cloudSyncPromise = null;
 
 const supabaseConfig = window.SMOKELOG_SUPABASE_CONFIG || {};
+// Abilita l'accesso cloud solo se URL e chiave pubblica hanno un formato utilizzabile.
 const cloudConfigured = typeof supabaseConfig.url === 'string'
   && /^https:\/\/.+\.supabase\.co\/?$/.test(supabaseConfig.url)
   && typeof supabaseConfig.anonKey === 'string'
@@ -57,6 +58,15 @@ const elements = {
   historyCount: document.getElementById('history-count'),
   historyFootnote: document.getElementById('history-footnote'),
   toast: document.getElementById('toast'),
+  toastIcon: document.getElementById('toast-icon'),
+  toastMessage: document.getElementById('toast-message'),
+  actionDialog: document.getElementById('action-dialog'),
+  actionDialogIcon: document.getElementById('action-dialog-icon'),
+  actionDialogEyebrow: document.getElementById('action-dialog-eyebrow'),
+  actionDialogTitle: document.getElementById('action-dialog-title'),
+  actionDialogMessage: document.getElementById('action-dialog-message'),
+  actionDialogCancel: document.getElementById('action-dialog-cancel'),
+  actionDialogConfirm: document.getElementById('action-dialog-confirm'),
   importFile: document.getElementById('import-file'),
   storageStatus: document.getElementById('storage-status'),
   accountStatus: document.getElementById('account-status'),
@@ -94,7 +104,7 @@ function describeAuthError(result, status) {
     email_not_confirmed: 'Conferma prima il tuo indirizzo email dal link ricevuto.',
     email_exists: 'Questo indirizzo email è già registrato. Prova ad accedere o recupera la password.',
     invalid_credentials: 'Email o password non corrette.',
-    over_email_send_rate_limit: 'Supabase ha raggiunto il limite temporaneo di invio email. Riprova più tardi o controlla la configurazione SMTP.',
+    over_email_send_rate_limit: 'Supabase ha raggiunto il limite temporaneo di invio email. Non inviare altre richieste per ora. Controlla Authentication → Users: se l’account esiste ma non è confermato, configura SMTP personalizzato in Supabase prima di chiedere un nuovo invio.',
     weak_password: 'La password non rispetta i requisiti di sicurezza impostati.'
   };
   if (code && knownMessages[code]) return knownMessages[code];
@@ -104,6 +114,7 @@ function describeAuthError(result, status) {
 }
 
 function setAccountStatus(message, isError = false, isSuccess = false, isPending = false) {
+  // Mantiene sincronizzati il messaggio nel pannello e quello nella finestra modale.
   elements.accountStatus.textContent = message;
   elements.accountStatus.classList.toggle('is-error', isError);
   elements.accountStatus.classList.toggle('is-success', isSuccess);
@@ -115,6 +126,7 @@ function setAccountStatus(message, isError = false, isSuccess = false, isPending
 }
 
 function updateAccountControls() {
+  // Il blocco dell'interfaccia e i controlli dipendono sempre dallo stato auth corrente.
   const signedIn = isAuthenticated;
   const signingUp = authMode === 'signup';
   elements.appFrame.inert = !signedIn;
@@ -211,6 +223,7 @@ function clearCloudSession() {
 }
 
 function setAuthRequestPending(pending, action = '') {
+  // Disabilita invii ripetuti e mostra chiaramente quale operazione sta aspettando Supabase.
   authRequestPending = pending;
   elements.authForm.setAttribute('aria-busy', String(pending));
   elements.signIn.disabled = pending;
@@ -238,6 +251,7 @@ function setAuthRequestPending(pending, action = '') {
 }
 
 async function supabaseAuthRequest(path, body, accessToken, query = {}) {
+  // Alcuni endpoint Auth ricevono parametri come redirect_to nella query, non nel JSON.
   const requestUrl = new URL(`/auth/v1/${path}`, supabaseConfig.url);
   Object.entries(query).forEach(([key, value]) => requestUrl.searchParams.set(key, value));
   const response = await fetch(requestUrl.href, {
@@ -261,9 +275,32 @@ async function supabaseAuthRequest(path, body, accessToken, query = {}) {
   if (!response.ok) {
     const error = new Error(describeAuthError(result, response.status));
     error.authCode = result && (result.error_code || result.code);
+    error.authStatus = response.status;
     throw error;
   }
   return result;
+}
+
+function isInvalidRefreshTokenError(error) {
+  return error.authStatus === 400
+    && (error.authCode === 'refresh_token_not_found'
+      || /invalid refresh token|refresh token.*not found/i.test(error.message));
+}
+
+async function refreshCloudSession(refreshToken) {
+  try {
+    return await supabaseAuthRequest('token?grant_type=refresh_token', { refresh_token: refreshToken });
+  } catch (error) {
+    if (isInvalidRefreshTokenError(error)) {
+      // El token rifiutato non va ritentato: rimuove solo la sessione locale, non i dati cloud.
+      isPasswordRecovery = false;
+      clearCloudSession();
+      openAuthenticationModal();
+      setAccountStatus('Supabase ha rifiutato la sessione salvata su questo dispositivo. Ho rimosso la sessione locale; lo storico online non è stato cancellato. Accedi di nuovo con email e password.', true);
+      error.authSessionCleared = true;
+    }
+    throw error;
+  }
 }
 
 async function supabaseRequest(path, options = {}, retry = true) {
@@ -277,7 +314,8 @@ async function supabaseRequest(path, options = {}, retry = true) {
     }
   });
   if (response.status === 401 && retry && cloudSession.refresh_token) {
-    const refreshed = await supabaseAuthRequest('token?grant_type=refresh_token', { refresh_token: cloudSession.refresh_token });
+    // Aggiorna una sola volta il token scaduto e ripete la stessa richiesta.
+    const refreshed = await refreshCloudSession(cloudSession.refresh_token);
     saveCloudSession(refreshed);
     return supabaseRequest(path, options, false);
   }
@@ -297,6 +335,7 @@ async function supabaseRequest(path, options = {}, retry = true) {
 }
 
 async function uploadCloudEvents(source) {
+  // Suddivide gli invii per restare entro la dimensione gestibile dalle richieste REST.
   for (let start = 0; start < source.length; start += CLOUD_BATCH_SIZE) {
     const rows = source.slice(start, start + CLOUD_BATCH_SIZE).map(event => ({
       id: event.id,
@@ -314,6 +353,7 @@ async function uploadCloudEvents(source) {
 
 async function fetchCloudEvents() {
   const eventsFromCloud = [];
+  // Legge tutte le pagine: una singola risposta potrebbe non contenere l'intero storico.
   for (let start = 0; ; start += CLOUD_BATCH_SIZE) {
     const rows = await supabaseRequest('smokelog_events?select=id,type,timestamp&order=timestamp.asc', {
       headers: {
@@ -328,6 +368,7 @@ async function fetchCloudEvents() {
 }
 
 function syncCloudEvents() {
+  // Accorpa le sincronizzazioni concorrenti per evitare letture/scritture duplicate.
   if (cloudSyncPromise) return cloudSyncPromise;
   cloudSyncPromise = performCloudSync().finally(() => {
     cloudSyncPromise = null;
@@ -345,6 +386,7 @@ async function performCloudSync() {
       throw new Error('La sessione è terminata durante la sincronizzazione. Accedi di nuovo.');
     }
   };
+  // La copia locale viene caricata solo al primo collegamento; gli accessi successivi seguono il cloud.
   const localEvents = (await readAllEvents()).map(event => {
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.id)) return event;
     return { ...event, id: makeId() };
@@ -354,7 +396,13 @@ async function performCloudSync() {
   ensureSessionActive();
   const previousUserId = localStorage.getItem(LAST_SYNC_USER_KEY);
   if (previousUserId && previousUserId !== userId && localEvents.length > 0) {
-    const approved = window.confirm('Questo dispositivo contiene uno storico locale sincronizzato con un altro account. Vuoi sostituirlo con i dati dell’account a cui hai appena effettuato l’accesso? Esporta prima un backup JSON per conservarlo.');
+    // Evita di associare per errore allo stesso account dati locali appartenenti a un altro utente.
+    const approved = await openActionDialog({
+      title: 'Cambiare account?',
+      message: 'Questo dispositivo contiene uno storico sincronizzato con un altro account. Accedendo, lo storico locale verrà sostituito con quello del nuovo account. Esporta prima un backup JSON se vuoi conservarlo.',
+      confirmLabel: 'Cambia account',
+      danger: true
+    });
     if (!approved) {
       clearCloudSession();
       throw new Error('Accesso annullato: lo storico locale è rimasto invariato.');
@@ -419,6 +467,7 @@ async function handleSignUp() {
     || !elements.confirmPassword.reportValidity()) return;
   setAuthRequestPending(true, 'signup');
   try {
+    // Con la conferma email attiva Supabase crea l'utente senza restituire una sessione.
     const result = await supabaseAuthRequest('signup', {
       email: elements.accountEmail.value.trim(),
       password: elements.accountPassword.value
@@ -532,6 +581,7 @@ async function handleSignOut() {
 }
 
 function restoreCloudSession() {
+  // Evita che l'avvio e gli eventi di visibilità ripristinino la stessa sessione insieme.
   if (authRestorePromise) return authRestorePromise;
   authRestorePromise = restoreCloudSessionFromUrl().finally(() => {
     authRestorePromise = null;
@@ -541,6 +591,7 @@ function restoreCloudSession() {
 
 async function restoreCloudSessionFromUrl() {
   let stored = localStorage.getItem(CLOUD_SESSION_KEY);
+  // Supabase può restituire token nell'hash oppure un token_hash nella query del link email.
   const returnedParams = new URLSearchParams(location.search.slice(1));
   new URLSearchParams(location.hash.slice(1)).forEach((value, key) => returnedParams.set(key, value));
   isPasswordRecovery = returnedParams.get('type') === 'recovery';
@@ -568,6 +619,7 @@ async function restoreCloudSessionFromUrl() {
     history.replaceState(null, '', `${location.pathname}${location.search}`);
     stored = localStorage.getItem(CLOUD_SESSION_KEY);
   } else if (returnedParams.has('token_hash') && returnedParams.has('type')) {
+    // Verifica i link email monouso prima di salvarne la sessione restituita.
     const tokenType = returnedParams.get('type');
     const supportedTokenTypes = new Set(['signup', 'invite', 'magiclink', 'recovery', 'email_change']);
     if (!supportedTokenTypes.has(tokenType)) {
@@ -618,15 +670,26 @@ async function restoreCloudSessionFromUrl() {
     }
     cloudSession = session;
     if (isPasswordRecovery) openAuthenticationModal();
-    if (session.expires_at < Math.floor(Date.now() / 1000) + 60) {
-      saveCloudSession(await supabaseAuthRequest('token?grant_type=refresh_token', { refresh_token: session.refresh_token }));
+    const expiresAt = Number(session.expires_at);
+    if (!Number.isFinite(expiresAt) || expiresAt < Math.floor(Date.now() / 1000) + 60) {
+      saveCloudSession(await refreshCloudSession(session.refresh_token));
     }
-    const user = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/user`, {
+    let user = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/user`, {
       headers: {
         apikey: supabaseConfig.anonKey,
         Authorization: `Bearer ${cloudSession.access_token}`
       }
     });
+    if (user.status === 401) {
+      // Un token scaduto o revocato viene rinnovato una volta anche se expires_at sembrava valido.
+      saveCloudSession(await refreshCloudSession(cloudSession.refresh_token));
+      user = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/user`, {
+        headers: {
+          apikey: supabaseConfig.anonKey,
+          Authorization: `******`
+        }
+      });
+    }
     if (!user.ok) throw new Error(`Verifica dell’account non riuscita (HTTP ${user.status}).`);
     cloudSession.user = await user.json();
     saveCloudSession(cloudSession);
@@ -639,6 +702,7 @@ async function restoreCloudSessionFromUrl() {
     }
   } catch (error) {
     console.error(error);
+    if (error.authSessionCleared) return;
     isAuthenticated = false;
     updateAccountControls();
     setAccountStatus(error.message || 'Impossibile ripristinare la sessione cloud.', true);
@@ -655,6 +719,7 @@ async function refreshWhenReturningToApp() {
     await syncCloudEvents();
   } catch (error) {
     console.error(error);
+    if (error.authSessionCleared) return;
     setAccountStatus(`Sincronizzazione non riuscita: ${error.message || 'verifica la connessione.'}`, true);
   }
 }
@@ -668,6 +733,7 @@ function setupAuthenticationEvents() {
   window.addEventListener('storage', event => {
     if (event.key === CLOUD_SESSION_KEY) {
       if (!event.newValue && isAuthenticated) {
+        // Un logout in un'altra scheda deve rimuovere anche la copia locale protetta dal gate.
         cloudSession = null;
         isAuthenticated = false;
         Promise.resolve(cloudSyncPromise).catch(() => {}).then(() => clearAllEvents()).then(() => {
@@ -692,6 +758,7 @@ function setupAuthenticationEvents() {
 
 function openDatabase() {
   if (database) return Promise.resolve(database);
+  // Riusa l'apertura già in corso se più operazioni IndexedDB partono contemporaneamente.
   if (databaseOpening) return databaseOpening;
 
   databaseOpening = new Promise((resolve, reject) => {
@@ -731,6 +798,7 @@ function openDatabase() {
 }
 
 async function createDatabaseTransaction(mode) {
+  // Alcuni browser chiudono la connessione inattiva: riaprila e riprova una sola volta.
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const currentDatabase = await openDatabase();
     try {
@@ -799,6 +867,7 @@ function makeId() {
 }
 
 function localDateKey(date) {
+  // Costruisce la data nel fuso locale, evitando che UTC sposti il giorno esportato.
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -816,6 +885,7 @@ function addDays(date, amount) {
 }
 
 function startOfRange(range, now = new Date()) {
+  // Gli intervalli usano mezzanotte locale e un estremo finale esclusivo.
   if (range === 'day') return startOfDay(now);
   if (range === 'week') return addDays(startOfDay(now), -6);
   if (range === 'month') return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -886,6 +956,7 @@ function createBucket(label, start, end, shortLabel = label) {
 }
 
 function makeBuckets(range, now = new Date()) {
+  // Le barre del grafico cambiano granularità in base al periodo selezionato.
   const today = startOfDay(now);
   if (range === 'day') {
     const buckets = [];
@@ -1046,11 +1117,35 @@ function render() {
   renderHistory();
 }
 
-function showToast(message) {
+function showToast(message, type = 'success') {
   window.clearTimeout(toastTimer);
-  elements.toast.textContent = message;
+  const icons = { success: '✓', error: '!', info: 'i' };
+  elements.toast.classList.remove('is-success', 'is-error', 'is-info');
+  elements.toast.classList.add(`is-${type}`);
+  elements.toastIcon.textContent = icons[type] || icons.info;
+  elements.toastMessage.textContent = message;
   elements.toast.classList.add('is-visible');
-  toastTimer = window.setTimeout(() => elements.toast.classList.remove('is-visible'), 2500);
+  toastTimer = window.setTimeout(() => elements.toast.classList.remove('is-visible'), 3600);
+}
+
+function openActionDialog({ title, message, confirmLabel = 'Conferma', cancelLabel = 'Annulla', danger = false, notice = false }) {
+  if (elements.actionDialog.open) return Promise.resolve(false);
+  elements.actionDialogTitle.textContent = title;
+  elements.actionDialogMessage.textContent = message;
+  elements.actionDialogConfirm.textContent = notice ? 'Ho capito' : confirmLabel;
+  elements.actionDialogCancel.textContent = cancelLabel;
+  elements.actionDialogCancel.hidden = notice;
+  elements.actionDialog.classList.toggle('is-danger', danger);
+  elements.actionDialog.classList.toggle('is-notice', notice);
+  elements.actionDialogEyebrow.textContent = danger ? 'CONFERMA AZIONE' : notice ? 'AVVISO' : 'SMOKELOG';
+  elements.actionDialogIcon.textContent = danger ? '−' : notice ? 'i' : '✓';
+  elements.actionDialog.showModal();
+
+  return new Promise(resolve => {
+    elements.actionDialog.addEventListener('close', () => {
+      resolve(elements.actionDialog.returnValue === 'confirm');
+    }, { once: true });
+  });
 }
 
 async function handleAddEvent(type) {
@@ -1072,7 +1167,7 @@ async function handleAddEvent(type) {
     showToast(`${eventLabel(type)} registrat${type === 'joint' ? 'o' : 'a'}.`);
   } catch (error) {
     console.error(error);
-    showToast(uploaded ? 'Salvata online; aggiornamento locale non riuscito.' : 'Non salvata online: verifica la connessione e riprova.');
+    showToast(uploaded ? 'Salvata online; aggiornamento locale non riuscito.' : 'Non salvata online: verifica la connessione e riprova.', 'error');
   }
 }
 
@@ -1082,7 +1177,13 @@ async function handleDeleteEvent(event) {
     return;
   }
   const typeLabel = eventLabel(event.type);
-  if (!window.confirm(`Vuoi eliminare la registrazione «${typeLabel}» del ${formatDateTime(event.timestamp)}?`)) return;
+  const approved = await openActionDialog({
+    title: 'Sicuro che non l’hai fumata?',
+    message: `${typeLabel} · ${formatDateTime(event.timestamp)}. La registrazione verrà rimossa dallo storico sincronizzato.`,
+    confirmLabel: 'Sì, elimina',
+    danger: true
+  });
+  if (!approved) return;
   try {
     if (cloudConfigured) {
       await supabaseRequest(`smokelog_events?id=eq.${encodeURIComponent(event.id)}`, { method: 'DELETE' });
@@ -1093,7 +1194,7 @@ async function handleDeleteEvent(event) {
     showToast('Registrazione eliminata.');
   } catch (error) {
     console.error(error);
-    showToast('Non è stato possibile eliminare la registrazione.');
+    showToast('Non è stato possibile eliminare la registrazione.', 'error');
   }
 }
 
@@ -1158,6 +1259,7 @@ function validateBackup(parsed) {
   }
   const seen = new Set();
   const validated = [];
+  // Convalida l'intero file prima di modificare l'archivio corrente.
   for (const item of parsed.events) {
     if (!item || typeof item.id !== 'string' || !Object.hasOwn(EVENT_LABELS, item.type) || typeof item.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp))) {
       throw new Error('Il backup contiene una registrazione non valida. Nessun dato è stato modificato.');
@@ -1181,7 +1283,13 @@ async function importJsonFile(file) {
     const raw = await file.text();
     const parsed = JSON.parse(raw);
     const validated = validateBackup(parsed);
-    const approved = window.confirm(`Il backup contiene ${validated.length} registrazioni. Importandolo, lo storico attuale verrà sostituito. Prima di continuare, esporta un backup se vuoi conservare i dati attuali. Procedere?`);
+    // L'importazione sostituisce lo storico locale e cloud, non lo unisce.
+    const approved = await openActionDialog({
+      title: 'Sostituire lo storico?',
+      message: `Il backup contiene ${validated.length} registrazioni e sostituirà tutti i dati attuali, anche quelli sincronizzati. Esporta prima un backup se vuoi conservarli.`,
+      confirmLabel: 'Importa backup',
+      danger: true
+    });
     if (!approved) return;
     if (cloudConfigured) {
       await supabaseRequest('rpc/replace_smokelog_events', {
@@ -1195,7 +1303,11 @@ async function importJsonFile(file) {
     showToast(`Importate ${validated.length} registrazioni.`);
   } catch (error) {
     console.error(error);
-    window.alert(error instanceof SyntaxError ? 'Il file scelto non è un JSON valido.' : (error.message || 'Importazione non riuscita.'));
+    await openActionDialog({
+      title: 'Importazione non riuscita',
+      message: error instanceof SyntaxError ? 'Il file selezionato non è un JSON valido.' : (error.message || 'Non è stato possibile importare il backup.'),
+      notice: true
+    });
   } finally {
     elements.importFile.value = '';
   }
@@ -1207,10 +1319,15 @@ async function handleClearData() {
     return;
   }
   if (events.length === 0) {
-    showToast('Non ci sono registrazioni da eliminare.');
+    showToast('Non ci sono registrazioni da eliminare.', 'info');
     return;
   }
-  const approved = window.confirm(`Stai per eliminare tutte le ${events.length} registrazioni salvate su questo dispositivo. L’azione non si può annullare. Hai già esportato un backup, se necessario?`);
+  const approved = await openActionDialog({
+    title: 'Eliminare tutto lo storico?',
+    message: `Stai per eliminare tutte le ${events.length} registrazioni dall’account e da questo dispositivo. L’operazione non si può annullare. Esporta prima un backup se vuoi conservarle.`,
+    confirmLabel: 'Sì, elimina tutto',
+    danger: true
+  });
   if (!approved) return;
   try {
     if (cloudConfigured) {
@@ -1222,7 +1339,7 @@ async function handleClearData() {
     showToast('Storico eliminato.');
   } catch (error) {
     console.error(error);
-    showToast('Non è stato possibile eliminare lo storico.');
+    showToast('Non è stato possibile eliminare lo storico.', 'error');
   }
 }
 
@@ -1310,6 +1427,7 @@ function setupEventHandlers() {
 }
 
 async function init() {
+  // Prepara UI e archivio prima di ripristinare la sessione, che può attivare la sincronizzazione.
   setupEventHandlers();
   updateAccountControls();
   try {
@@ -1320,7 +1438,11 @@ async function init() {
     await updateStorageStatus();
   } catch (error) {
     console.error(error);
-    window.alert(`SmokeLog non riesce ad aprire l’archivio locale. Prova con una versione recente di Safari o di un browser compatibile. Dettaglio: ${error.message || 'errore sconosciuto'}`);
+    await openActionDialog({
+      title: 'Archivio non disponibile',
+      message: `SmokeLog non riesce ad aprire l’archivio locale. Prova con una versione recente di Safari o di un browser compatibile. Dettaglio: ${error.message || 'errore sconosciuto'}`,
+      notice: true
+    });
   }
 
   if (cloudConfigured) {

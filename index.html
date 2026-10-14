@@ -225,7 +225,22 @@
     </form>
   </dialog>
 
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite">
+    <span id="toast-icon" class="toast-icon" aria-hidden="true">✓</span>
+    <span id="toast-message"></span>
+  </div>
+
+  <dialog id="action-dialog" class="action-modal" aria-labelledby="action-dialog-title" aria-describedby="action-dialog-message">
+    <div class="action-modal-icon" id="action-dialog-icon" aria-hidden="true">!</div>
+    <p class="eyebrow" id="action-dialog-eyebrow">SMOKELOG</p>
+    <h2 id="action-dialog-title"></h2>
+    <p id="action-dialog-message"></p>
+    <form method="dialog" class="action-modal-actions">
+      <button type="submit" class="secondary-button" value="cancel" id="action-dialog-cancel">Annulla</button>
+      <button type="submit" class="primary-button" value="confirm" id="action-dialog-confirm">Conferma</button>
+    </form>
+  </dialog>
+
   <script src="./supabase-config.js" defer></script>
   <script src="./app.js" defer></script>
 </body>

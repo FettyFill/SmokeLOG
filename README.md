@@ -25,6 +25,8 @@ La sincronizzazione non è attiva finché non configuri un progetto Supabase. No
 
 Se abiliti la conferma email, il link deve riportare all'indirizzo GitHub Pages configurato. Il browser o l'app di posta possono aprire il link in una nuova scheda: non è possibile forzare il browser a riutilizzare la scheda esistente, ma SmokeLog aggiorna la scheda già aperta quando torni ad essa. In Supabase vai in **Authentication → URL Configuration** e consenti l'URL esatto della pagina pubblicata, incluso il percorso `/SmokeLOG/`. Le registrazioni aggiunte, cancellate o importate mentre si è autenticati sono sincronizzate sul database online; serve una connessione internet per scrivere o aggiornare lo storico cloud. L'archivio locale IndexedDB è una copia di appoggio, non la copia autorevole.
 
+SmokeLog conserva la sessione sul dispositivo e prova a ripristinarla all'apertura della web app. Il token di accesso viene rinnovato quando necessario; non viene chiesto di accedere di nuovo alla sua normale scadenza. Se la sessione viene revocata o si cancellano i dati del browser, sarà necessario autenticarsi di nuovo.
+
 ### Email di registrazione e conferma
 
 L'app invia a Supabase la richiesta di registrazione e l'indirizzo di ritorno. Una risposta positiva significa che Supabase ha accettato la richiesta, non garantisce che il provider abbia consegnato l'email. Il mittente SMTP predefinito può inviare solo a indirizzi associati all'organizzazione Supabase e ha un limite attuale di 2 email all'ora; non è il servizio adatto per consegnare conferme agli indirizzi degli utenti.
@@ -36,7 +38,11 @@ Se il messaggio non arriva:
 3. Verifica **Authentication → URL Configuration**: il redirect consentito deve includere l'URL completo del sito, compreso il percorso `/SmokeLOG/`.
 4. Per inviare email agli utenti, configura un provider SMTP personale in **Supabase Dashboard → Authentication → SMTP Settings**. Servono host, porta, credenziali SMTP e un mittente appartenente a un dominio verificato presso il provider; configura anche i record DNS richiesti (per esempio SPF e DKIM). Consulta la [guida ufficiale Supabase per SMTP](https://supabase.com/docs/guides/auth/auth-smtp).
 
+Se l'app mostra **“Supabase ha raggiunto il limite temporaneo di invio email”**, smetti di premere **Registrati** e **Invia di nuovo l’email di conferma**: altri tentativi possono prolungare il blocco. Verifica prima **Authentication → Users**. Se l'utente esiste ed è in attesa di conferma, non creare account ripetuti; configura SMTP personale, poi richiedi un solo nuovo invio dopo che il limite è rientrato. L'attesa può rimuovere il rate limit temporaneo, ma non rimuove le restrizioni del mittente predefinito verso indirizzi non autorizzati.
+
 Se l'account è in attesa di conferma, SmokeLog mostra il pulsante evidenziato **Invia di nuovo l’email di conferma**. La risposta positiva conferma solo che Supabase ha accettato la richiesta di reinvio, non che l'email sia stata recapitata. Nei log, `User repeated signup` significa che è stata richiesta di nuovo la registrazione per un indirizzo già presente: ripetere **Registrati** non è un modo affidabile per reinviare la conferma. Non disattivare la conferma email per aggirare un problema di consegna. Se la registrazione appare in **Users** ma non arriva nessuna email, la diagnosi va fatta nei log e nelle impostazioni email del progetto Supabase.
+
+Se nei log compaiono `Invalid Refresh Token: Refresh Token Not Found`, il browser sta tentando di riusare una sessione locale non più valida. SmokeLog rimuove questa sessione e richiede un nuovo accesso; questo non elimina lo storico cloud. Il log `Mail.send` insieme a `User confirmation requested` indica che Supabase ha avviato il flusso di invio, ma non certifica la consegna alla casella.
 
 Gli account sono elencati in **Authentication → Users**; la tabella `public.smokelog_events` contiene soltanto le registrazioni, quindi resta vuota finché un utente non confermato effettua l'accesso e aggiunge un evento.
 

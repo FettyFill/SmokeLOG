@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'smokelog-shell-v11';
+const CACHE_NAME = 'smokelog-shell-v14';
 const APP_SHELL = [
   './',
   './index.html',
@@ -14,6 +14,7 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', event => {
+  // Scarica l'interfaccia essenziale prima di rendere attiva la nuova versione.
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => cache.addAll(APP_SHELL))
@@ -22,6 +23,7 @@ self.addEventListener('install', event => {
 });
 
 self.addEventListener('activate', event => {
+  // Rimuove le cache delle versioni precedenti dopo l'attivazione della nuova shell.
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(keys.filter(key => key.startsWith('smokelog-shell-') && key !== CACHE_NAME).map(key => caches.delete(key))))
@@ -36,7 +38,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Prefer the latest files while online; use the cached copy without a connection.
+  // Preferisce i file aggiornati online e usa la cache se la rete non è disponibile.
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
     try {
