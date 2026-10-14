@@ -7,13 +7,26 @@ const MAX_RECENT_EVENTS = 10;
 const CLOUD_BATCH_SIZE = 500;
 const CLOUD_SESSION_KEY = 'smokelog-supabase-session';
 const LAST_SYNC_USER_KEY = 'smokelog-last-sync-user';
+const EVENT_LABELS = {
+  cigarette: 'Sigaretta',
+  joint: 'Barnei',
+  'half-cigarette': 'Mezza Siga',
+  puzzetta: 'Puzzetta'
+};
 
 let database;
+let databaseOpening;
 let events = [];
 let activeRange = 'day';
 let toastTimer;
 let cloudSession = null;
+let isAuthenticated = false;
 let isPasswordRecovery = false;
+let authMode = 'signin';
+let awaitingEmailConfirmation = false;
+let authRequestPending = false;
+let authRestorePromise = null;
+let cloudSyncPromise = null;
 
 const supabaseConfig = window.SMOKELOG_SUPABASE_CONFIG || {};
 const cloudConfigured = typeof supabaseConfig.url === 'string'
@@ -28,10 +41,14 @@ const elements = {
   todayTotalLabel: document.getElementById('today-total-label'),
   todayCigarettes: document.getElementById('today-cigarettes'),
   todayJoints: document.getElementById('today-joints'),
+  todayHalfCigarettes: document.getElementById('today-half-cigarettes'),
+  todayPuzzetta: document.getElementById('today-puzzetta'),
   periodLabel: document.getElementById('period-label'),
   periodTotal: document.getElementById('period-total'),
   periodCigarettes: document.getElementById('period-cigarettes'),
   periodJoints: document.getElementById('period-joints'),
+  periodHalfCigarettes: document.getElementById('period-half-cigarettes'),
+  periodPuzzetta: document.getElementById('period-puzzetta'),
   chartTitle: document.getElementById('chart-title'),
   chartSubtitle: document.getElementById('chart-subtitle'),
   chartTotalPill: document.getElementById('chart-total-pill'),
@@ -45,40 +62,134 @@ const elements = {
   accountStatus: document.getElementById('account-status'),
   accountEmail: document.getElementById('account-email'),
   accountPassword: document.getElementById('account-password'),
+  confirmPassword: document.getElementById('confirm-password'),
+  confirmPasswordLabel: document.getElementById('confirm-password-label'),
+  authTitle: document.getElementById('auth-title'),
+  authIntro: document.getElementById('auth-intro'),
   signIn: document.getElementById('sign-in'),
   signUp: document.getElementById('sign-up'),
+  registerAccount: document.getElementById('register-account'),
+  switchAuthMode: document.getElementById('switch-auth-mode'),
   recoverPassword: document.getElementById('recover-password'),
+  resendConfirmation: document.getElementById('resend-confirmation'),
   saveNewPassword: document.getElementById('save-new-password'),
+  authForm: document.getElementById('auth-form'),
   signOut: document.getElementById('sign-out'),
   signedInControls: document.getElementById('signed-in-controls'),
   privacyLabel: document.getElementById('privacy-label'),
-  footerPrivacyLabel: document.getElementById('footer-privacy-label')
+  footerPrivacyLabel: document.getElementById('footer-privacy-label'),
+  appFrame: document.querySelector('.app-frame'),
+  authGate: document.getElementById('auth-gate'),
+  authGateMessage: document.getElementById('auth-gate-message'),
+  openAuthModal: document.getElementById('open-auth-modal'),
+  authModal: document.getElementById('auth-modal'),
+  closeAuthModal: document.getElementById('close-auth-modal'),
+  modalAccountStatus: document.getElementById('account-modal-status')
 };
 
-function setAccountStatus(message, isError = false) {
+function describeAuthError(result, status) {
+  const code = result && (result.error_code || result.code);
+  const detail = result && (result.msg || result.message || result.error_description || result.error);
+  const knownMessages = {
+    email_not_confirmed: 'Conferma prima il tuo indirizzo email dal link ricevuto.',
+    email_exists: 'Questo indirizzo email è già registrato. Prova ad accedere o recupera la password.',
+    invalid_credentials: 'Email o password non corrette.',
+    over_email_send_rate_limit: 'Supabase ha raggiunto il limite temporaneo di invio email. Riprova più tardi o controlla la configurazione SMTP.',
+    weak_password: 'La password non rispetta i requisiti di sicurezza impostati.'
+  };
+  if (code && knownMessages[code]) return knownMessages[code];
+  if (status === 429) return `Supabase ha limitato temporaneamente le richieste.${detail ? ` ${detail}` : ''}`;
+  if (status >= 500) return `Il servizio di autenticazione Supabase ha restituito un errore.${detail ? ` ${detail}` : ` (HTTP ${status}).`}`;
+  return detail || `Richiesta di autenticazione non riuscita (HTTP ${status}).`;
+}
+
+function setAccountStatus(message, isError = false, isSuccess = false, isPending = false) {
   elements.accountStatus.textContent = message;
   elements.accountStatus.classList.toggle('is-error', isError);
+  elements.accountStatus.classList.toggle('is-success', isSuccess);
+  elements.accountStatus.classList.toggle('is-pending', isPending);
+  elements.modalAccountStatus.textContent = message;
+  elements.modalAccountStatus.classList.toggle('is-error', isError);
+  elements.modalAccountStatus.classList.toggle('is-success', isSuccess);
+  elements.modalAccountStatus.classList.toggle('is-pending', isPending);
 }
 
 function updateAccountControls() {
-  const signedIn = Boolean(cloudSession);
+  const signedIn = isAuthenticated;
+  const signingUp = authMode === 'signup';
+  elements.appFrame.inert = !signedIn;
+  elements.appFrame.classList.toggle('is-locked', !signedIn);
+  elements.authGate.hidden = signedIn;
+  elements.authGateMessage.textContent = cloudConfigured
+    ? 'Accedi o crea un account per usare SmokeLog e sincronizzare il tuo storico.'
+    : 'La sincronizzazione non è ancora configurata. Completa i passaggi Supabase indicati nel README.';
+  elements.openAuthModal.disabled = !cloudConfigured;
   elements.privacyLabel.textContent = !cloudConfigured
     ? 'Solo sul dispositivo'
     : signedIn ? 'Account attivo' : 'Accedi per sincronizzare';
   elements.footerPrivacyLabel.textContent = cloudConfigured
     ? 'Account personale · Nessun analytics'
     : 'Solo sul dispositivo · Nessun analytics';
-  elements.signedInControls.hidden = !cloudSession;
+  elements.signedInControls.hidden = !signedIn;
   elements.signOut.hidden = !signedIn || isPasswordRecovery;
-  elements.signIn.hidden = signedIn || isPasswordRecovery;
-  elements.signUp.hidden = signedIn || isPasswordRecovery;
-  elements.recoverPassword.hidden = signedIn || isPasswordRecovery;
+  elements.signIn.hidden = signedIn || isPasswordRecovery || signingUp;
+  elements.signUp.hidden = signedIn || isPasswordRecovery || signingUp;
+  elements.registerAccount.hidden = signedIn || isPasswordRecovery || !signingUp;
+  elements.recoverPassword.hidden = signedIn || isPasswordRecovery || signingUp;
+  elements.switchAuthMode.hidden = signedIn || isPasswordRecovery || !signingUp;
+  elements.switchAuthMode.textContent = signingUp ? 'Torna all’accesso' : 'Non hai un account? Registrati';
+  elements.resendConfirmation.hidden = signedIn || isPasswordRecovery || !awaitingEmailConfirmation;
+  elements.confirmPasswordLabel.hidden = !signingUp;
+  elements.confirmPassword.hidden = !signingUp;
+  elements.confirmPassword.required = signingUp;
+  elements.authTitle.textContent = isPasswordRecovery
+    ? 'Imposta una nuova password'
+    : signingUp ? 'Crea il tuo account' : 'Accedi al tuo account';
+  elements.authIntro.textContent = isPasswordRecovery
+    ? 'Scegli una password nuova per il tuo account.'
+    : signingUp
+      ? 'Inserisci email e password per creare il tuo account.'
+      : 'Lo storico è privato e sincronizzato sul tuo account.';
+  elements.signUp.textContent = signingUp ? 'Registrati' : 'Crea account';
   elements.saveNewPassword.hidden = !isPasswordRecovery;
-  elements.accountEmail.disabled = signedIn;
+  elements.signIn.disabled = authRequestPending;
+  elements.signUp.disabled = authRequestPending;
+  elements.registerAccount.disabled = authRequestPending;
+  elements.recoverPassword.disabled = authRequestPending;
+  elements.resendConfirmation.disabled = authRequestPending;
+  elements.saveNewPassword.disabled = authRequestPending;
+  elements.accountEmail.disabled = isPasswordRecovery;
   elements.accountPassword.disabled = signedIn && !isPasswordRecovery;
   elements.accountPassword.autocomplete = isPasswordRecovery ? 'new-password' : 'current-password';
-  document.getElementById('add-cigarette').disabled = cloudConfigured && !cloudSession;
-  document.getElementById('add-joint').disabled = cloudConfigured && !cloudSession;
+  document.getElementById('add-cigarette').disabled = !signedIn;
+  document.getElementById('add-joint').disabled = !signedIn;
+  document.getElementById('add-half-cigarette').disabled = !signedIn;
+  document.getElementById('add-puzzetta').disabled = !signedIn;
+}
+
+function openAuthenticationModal() {
+  if (!cloudConfigured) {
+    setAccountStatus('La sincronizzazione non è configurata. Segui la sezione Supabase nel README.', true);
+    return;
+  }
+  if (!isPasswordRecovery) setAuthMode('signin');
+  if (!elements.authModal.open) elements.authModal.showModal();
+  if (!isPasswordRecovery) elements.accountEmail.focus();
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  elements.accountPassword.value = '';
+  elements.confirmPassword.value = '';
+  elements.confirmPassword.setCustomValidity('');
+  setAccountStatus(mode === 'signup'
+    ? 'Crea il tuo account con email e password.'
+    : 'Inserisci email e password per continuare.');
+  updateAccountControls();
+}
+
+function closeAuthenticationModal() {
+  if (elements.authModal.open) elements.authModal.close();
 }
 
 function saveCloudSession(session) {
@@ -94,12 +205,42 @@ function saveCloudSession(session) {
 
 function clearCloudSession() {
   cloudSession = null;
+  isAuthenticated = false;
   localStorage.removeItem(CLOUD_SESSION_KEY);
   updateAccountControls();
 }
 
-async function supabaseAuthRequest(path, body, accessToken) {
-  const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/${path}`, {
+function setAuthRequestPending(pending, action = '') {
+  authRequestPending = pending;
+  elements.authForm.setAttribute('aria-busy', String(pending));
+  elements.signIn.disabled = pending;
+  elements.signUp.disabled = pending;
+  elements.registerAccount.disabled = pending;
+  elements.recoverPassword.disabled = pending;
+  elements.resendConfirmation.disabled = pending;
+  elements.saveNewPassword.disabled = pending;
+  elements.signIn.textContent = pending && action === 'signin' ? 'Accesso in corso…' : 'Accedi';
+  elements.registerAccount.textContent = pending && action === 'signup' ? 'Invio richiesta…' : 'Registrati';
+  elements.resendConfirmation.textContent = pending && action === 'resend'
+    ? 'Richiesta in corso…'
+    : 'Invia di nuovo l’email di conferma';
+  elements.signIn.toggleAttribute('aria-busy', pending && action === 'signin');
+  elements.registerAccount.toggleAttribute('aria-busy', pending && action === 'signup');
+  elements.resendConfirmation.toggleAttribute('aria-busy', pending && action === 'resend');
+  if (pending) {
+    const pendingMessages = {
+      signin: 'Verifica delle credenziali in corso…',
+      signup: 'Invio della richiesta di registrazione a Supabase…',
+      resend: 'Richiesta di reinvio email in corso…'
+    };
+    setAccountStatus(pendingMessages[action] || 'Operazione in corso…', false, false, true);
+  }
+}
+
+async function supabaseAuthRequest(path, body, accessToken, query = {}) {
+  const requestUrl = new URL(`/auth/v1/${path}`, supabaseConfig.url);
+  Object.entries(query).forEach(([key, value]) => requestUrl.searchParams.set(key, value));
+  const response = await fetch(requestUrl.href, {
     method: 'POST',
     headers: {
       apikey: supabaseConfig.anonKey,
@@ -118,7 +259,9 @@ async function supabaseAuthRequest(path, body, accessToken) {
     }
   }
   if (!response.ok) {
-    throw new Error(result.msg || result.message || result.error_description || result.error || `Richiesta di autenticazione non riuscita (HTTP ${response.status}).`);
+    const error = new Error(describeAuthError(result, response.status));
+    error.authCode = result && (result.error_code || result.code);
+    throw error;
   }
   return result;
 }
@@ -184,14 +327,33 @@ async function fetchCloudEvents() {
   return eventsFromCloud;
 }
 
-async function syncCloudEvents() {
+function syncCloudEvents() {
+  if (cloudSyncPromise) return cloudSyncPromise;
+  cloudSyncPromise = performCloudSync().finally(() => {
+    cloudSyncPromise = null;
+  });
+  return cloudSyncPromise;
+}
+
+async function performCloudSync() {
+  if (!cloudSession || !cloudSession.user || !cloudSession.user.id) {
+    throw new Error('La sessione non contiene un account valido. Accedi di nuovo.');
+  }
+  const userId = cloudSession.user.id;
+  const ensureSessionActive = () => {
+    if (!cloudSession || !cloudSession.user || cloudSession.user.id !== userId) {
+      throw new Error('La sessione è terminata durante la sincronizzazione. Accedi di nuovo.');
+    }
+  };
   const localEvents = (await readAllEvents()).map(event => {
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.id)) return event;
     return { ...event, id: makeId() };
   });
+  ensureSessionActive();
   const remoteEvents = await fetchCloudEvents();
+  ensureSessionActive();
   const previousUserId = localStorage.getItem(LAST_SYNC_USER_KEY);
-  if (previousUserId && previousUserId !== cloudSession.user.id && localEvents.length > 0) {
+  if (previousUserId && previousUserId !== userId && localEvents.length > 0) {
     const approved = window.confirm('Questo dispositivo contiene uno storico locale sincronizzato con un altro account. Vuoi sostituirlo con i dati dell’account a cui hai appena effettuato l’accesso? Esporta prima un backup JSON per conservarlo.');
     if (!approved) {
       clearCloudSession();
@@ -205,56 +367,118 @@ async function syncCloudEvents() {
     for (const event of localEvents) byId.set(event.id, event);
     nextEvents = [...byId.values()];
     await uploadCloudEvents(localEvents);
+    ensureSessionActive();
   }
   await replaceAllEvents(nextEvents);
+  ensureSessionActive();
   events = [...nextEvents].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   render();
-  localStorage.setItem(LAST_SYNC_USER_KEY, cloudSession.user.id);
+  localStorage.setItem(LAST_SYNC_USER_KEY, userId);
+  isAuthenticated = true;
+  updateAccountControls();
+  closeAuthenticationModal();
   setAccountStatus(`Sincronizzato con l’account ${cloudSession.user.email}.`);
 }
 
 async function handleSignIn() {
-  if (!elements.accountEmail.reportValidity() || !elements.accountPassword.reportValidity()) return;
+  if (authRequestPending || !elements.accountEmail.reportValidity() || !elements.accountPassword.reportValidity()) return;
+  setAuthRequestPending(true, 'signin');
   try {
     const result = await supabaseAuthRequest('token?grant_type=password', {
       email: elements.accountEmail.value.trim(),
       password: elements.accountPassword.value
     });
+    if (!result.access_token || !result.refresh_token || !result.user || !result.user.id) {
+      throw new Error('Supabase non ha restituito una sessione valida. Riprova ad accedere.');
+    }
     saveCloudSession(result);
-    await syncCloudEvents();
+    try {
+      await syncCloudEvents();
+    } catch (error) {
+      throw new Error(`Accesso effettuato, ma sincronizzazione non riuscita: ${error.message || 'controlla la connessione e la configurazione del database.'}`);
+    }
     elements.accountPassword.value = '';
+    awaitingEmailConfirmation = false;
   } catch (error) {
     console.error(error);
+    if (error.authCode === 'email_not_confirmed') awaitingEmailConfirmation = true;
+    updateAccountControls();
     setAccountStatus(error.message || 'Accesso non riuscito.', true);
+  } finally {
+    setAuthRequestPending(false);
   }
 }
 
 async function handleSignUp() {
-  if (!elements.accountEmail.reportValidity() || !elements.accountPassword.reportValidity()) return;
+  if (authRequestPending || authMode !== 'signup') return;
+  elements.confirmPassword.setCustomValidity(
+    elements.confirmPassword.value === elements.accountPassword.value ? '' : 'Le password non corrispondono.'
+  );
+  if (!elements.accountEmail.reportValidity()
+    || !elements.accountPassword.reportValidity()
+    || !elements.confirmPassword.reportValidity()) return;
+  setAuthRequestPending(true, 'signup');
   try {
     const result = await supabaseAuthRequest('signup', {
       email: elements.accountEmail.value.trim(),
-      password: elements.accountPassword.value,
-      options: { emailRedirectTo: location.href.split('#')[0] }
-    });
+      password: elements.accountPassword.value
+    }, null, { redirect_to: new URL('./', location.href).href });
     if (result.access_token) {
+      if (!result.refresh_token || !result.user || !result.user.id) {
+        throw new Error('Supabase non ha restituito una sessione valida per il nuovo account.');
+      }
+      awaitingEmailConfirmation = false;
       saveCloudSession(result);
-      await syncCloudEvents();
       elements.accountPassword.value = '';
+      elements.confirmPassword.value = '';
+      try {
+        await syncCloudEvents();
+      } catch (error) {
+        throw new Error(`Account creato e accesso effettuato, ma sincronizzazione non riuscita: ${error.message || 'controlla la connessione e la configurazione del database.'}`);
+      }
       return;
     }
+    if (!result.user || !result.user.id) {
+      throw new Error('Supabase non ha confermato la creazione dell’account. Riprova e controlla Authentication → Logs nel progetto.');
+    }
+    awaitingEmailConfirmation = true;
+    updateAccountControls();
     elements.accountPassword.value = '';
-    setAccountStatus('Account creato. Controlla la posta e conferma l’indirizzo email, poi accedi.');
+    elements.confirmPassword.value = '';
+    if (result.user && Array.isArray(result.user.identities) && result.user.identities.length === 0) {
+      setAccountStatus('Questo indirizzo risulta già registrato: ripetere la registrazione non invia necessariamente una nuova email. Se l’account non è ancora confermato, usa il pulsante qui sotto per richiedere un nuovo messaggio. Se è già confermato, torna all’accesso.', false, true);
+      return;
+    }
+    setAccountStatus('Supabase ha accettato la registrazione. Questo non conferma che l’email sia stata consegnata: controlla posta in arrivo e spam. Se non arriva, verifica Authentication → Users e Authentication → Logs; il mittente di prova Supabase è limitato e per altri destinatari serve SMTP personalizzato.', false, true);
   } catch (error) {
     console.error(error);
     setAccountStatus(error.message || 'Creazione account non riuscita.', true);
+  } finally {
+    setAuthRequestPending(false);
+  }
+}
+
+async function handleResendConfirmation() {
+  if (authRequestPending || !elements.accountEmail.reportValidity()) return;
+  setAuthRequestPending(true, 'resend');
+  try {
+    await supabaseAuthRequest('resend', {
+      type: 'signup',
+      email: elements.accountEmail.value.trim()
+    }, null, { redirect_to: new URL('./', location.href).href });
+    setAccountStatus('Supabase ha accettato il reinvio. Controlla posta in arrivo e spam; l’accettazione non garantisce la consegna. Verifica Authentication → Logs e SMTP in Supabase.', false, true);
+  } catch (error) {
+    console.error(error);
+    setAccountStatus(error.message || 'Non è stato possibile richiedere un nuovo messaggio di conferma.', true);
+  } finally {
+    setAuthRequestPending(false);
   }
 }
 
 async function handlePasswordRecovery() {
   if (!elements.accountEmail.reportValidity()) return;
   try {
-    const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/recover?redirect_to=${encodeURIComponent(location.href.split('#')[0])}`, {
+    const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/recover?redirect_to=${encodeURIComponent(new URL('./', location.href).href)}`, {
       method: 'POST',
       headers: { apikey: supabaseConfig.anonKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: elements.accountEmail.value.trim() })
@@ -268,7 +492,8 @@ async function handlePasswordRecovery() {
 }
 
 async function handleSaveNewPassword() {
-  if (!elements.accountPassword.reportValidity() || !cloudSession) return;
+  if (authRequestPending || !elements.accountPassword.reportValidity() || !cloudSession) return;
+  setAuthRequestPending(true);
   try {
     const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/user`, {
       method: 'PUT',
@@ -282,11 +507,13 @@ async function handleSaveNewPassword() {
     if (!response.ok) throw new Error(`Aggiornamento password non riuscito (HTTP ${response.status}).`);
     elements.accountPassword.value = '';
     isPasswordRecovery = false;
-    updateAccountControls();
+    await syncCloudEvents();
     setAccountStatus('Password aggiornata. Lo storico resta associato al tuo account.');
   } catch (error) {
     console.error(error);
     setAccountStatus(error.message || 'Aggiornamento password non riuscito.', true);
+  } finally {
+    setAuthRequestPending(false);
   }
 }
 
@@ -304,33 +531,93 @@ async function handleSignOut() {
   }
 }
 
-async function restoreCloudSession() {
+function restoreCloudSession() {
+  if (authRestorePromise) return authRestorePromise;
+  authRestorePromise = restoreCloudSessionFromUrl().finally(() => {
+    authRestorePromise = null;
+  });
+  return authRestorePromise;
+}
+
+async function restoreCloudSessionFromUrl() {
   let stored = localStorage.getItem(CLOUD_SESSION_KEY);
-  const returnedParams = new URLSearchParams(location.hash.slice(1));
+  const returnedParams = new URLSearchParams(location.search.slice(1));
+  new URLSearchParams(location.hash.slice(1)).forEach((value, key) => returnedParams.set(key, value));
   isPasswordRecovery = returnedParams.get('type') === 'recovery';
+  const authError = returnedParams.get('error_description')
+    || returnedParams.get('msg')
+    || returnedParams.get('error_code')
+    || returnedParams.get('error');
+  if (authError) {
+    history.replaceState(null, '', `${location.pathname}`);
+    openAuthenticationModal();
+    setAccountStatus(`Conferma o accesso non riuscito: ${authError}`, true);
+    return;
+  }
+
   const returnedAccessToken = returnedParams.get('access_token');
   const returnedRefreshToken = returnedParams.get('refresh_token');
   if (returnedAccessToken && returnedRefreshToken) {
+    openAuthenticationModal();
     saveCloudSession({
       access_token: returnedAccessToken,
       refresh_token: returnedRefreshToken,
       expires_in: Number(returnedParams.get('expires_in')) || 3600,
-      user: {}
+      user: null
     });
     history.replaceState(null, '', `${location.pathname}${location.search}`);
     stored = localStorage.getItem(CLOUD_SESSION_KEY);
+  } else if (returnedParams.has('token_hash') && returnedParams.has('type')) {
+    const tokenType = returnedParams.get('type');
+    const supportedTokenTypes = new Set(['signup', 'invite', 'magiclink', 'recovery', 'email_change']);
+    if (!supportedTokenTypes.has(tokenType)) {
+      history.replaceState(null, '', location.pathname);
+      setAccountStatus('Il link di conferma contiene un tipo di token non supportato. Richiedi un nuovo link.', true);
+      return;
+    }
+    isPasswordRecovery = tokenType === 'recovery';
+    try {
+      const verified = await supabaseAuthRequest('verify', {
+        type: tokenType,
+        token_hash: returnedParams.get('token_hash')
+      });
+      if (!verified.access_token || !verified.refresh_token) {
+        throw new Error('Supabase non ha restituito una sessione valida dal link email.');
+      }
+      openAuthenticationModal();
+      saveCloudSession(verified);
+      history.replaceState(null, '', location.pathname);
+      stored = localStorage.getItem(CLOUD_SESSION_KEY);
+    } catch (error) {
+      history.replaceState(null, '', location.pathname);
+      openAuthenticationModal();
+      setAccountStatus(error.message || 'Il link di conferma non è valido o è scaduto. Richiedi un nuovo link.', true);
+      return;
+    }
+  } else if (returnedAccessToken || returnedRefreshToken) {
+    history.replaceState(null, '', `${location.pathname}${location.search}`);
+    openAuthenticationModal();
+    setAccountStatus('Il link di conferma è incompleto o scaduto. Richiedi un nuovo link o accedi con email e password.', true);
+    return;
+  } else if (returnedParams.has('code')) {
+    history.replaceState(null, '', `${location.pathname}`);
+    openAuthenticationModal();
+    setAccountStatus('Il link di conferma usa un codice non supportato. Verifica il tipo di link email configurato in Supabase oppure accedi con email e password.', true);
+    return;
   }
   if (!stored) {
+    isAuthenticated = false;
+    updateAccountControls();
     setAccountStatus('Accedi o crea un account per sincronizzare lo storico online.');
     return;
   }
   try {
     const session = JSON.parse(stored);
-    if (!session.access_token || !session.refresh_token || !session.user || !session.user.id) {
+    if (!session.access_token || !session.refresh_token) {
       throw new Error('Sessione locale non valida.');
     }
     cloudSession = session;
-    updateAccountControls();
+    if (isPasswordRecovery) openAuthenticationModal();
     if (session.expires_at < Math.floor(Date.now() / 1000) + 60) {
       saveCloudSession(await supabaseAuthRequest('token?grant_type=refresh_token', { refresh_token: session.refresh_token }));
     }
@@ -344,21 +631,70 @@ async function restoreCloudSession() {
     cloudSession.user = await user.json();
     saveCloudSession(cloudSession);
     await syncCloudEvents();
-    if (isPasswordRecovery) setAccountStatus('Imposta una nuova password per il tuo account.');
+    if (isPasswordRecovery) {
+      isAuthenticated = false;
+      updateAccountControls();
+      openAuthenticationModal();
+      setAccountStatus('Imposta una nuova password per il tuo account.');
+    }
   } catch (error) {
     console.error(error);
-    if (cloudSession && localStorage.getItem(LAST_SYNC_USER_KEY) === cloudSession.user.id) {
-      events = await readAllEvents();
-      render();
-      setAccountStatus(`Connessione cloud non disponibile. È mostrata la copia locale del ${cloudSession.user.email}; le modifiche richiedono la connessione.`, true);
-      return;
-    }
+    isAuthenticated = false;
+    updateAccountControls();
     setAccountStatus(error.message || 'Impossibile ripristinare la sessione cloud.', true);
   }
 }
 
+async function refreshWhenReturningToApp() {
+  if (!cloudConfigured) return;
+  if (!isAuthenticated) {
+    if (localStorage.getItem(CLOUD_SESSION_KEY)) await restoreCloudSession();
+    return;
+  }
+  try {
+    await syncCloudEvents();
+  } catch (error) {
+    console.error(error);
+    setAccountStatus(`Sincronizzazione non riuscita: ${error.message || 'verifica la connessione.'}`, true);
+  }
+}
+
+function setupAuthenticationEvents() {
+  elements.openAuthModal.addEventListener('click', openAuthenticationModal);
+  elements.closeAuthModal.addEventListener('click', closeAuthenticationModal);
+  elements.authModal.addEventListener('click', event => {
+    if (event.target === elements.authModal) closeAuthenticationModal();
+  });
+  window.addEventListener('storage', event => {
+    if (event.key === CLOUD_SESSION_KEY) {
+      if (!event.newValue && isAuthenticated) {
+        cloudSession = null;
+        isAuthenticated = false;
+        Promise.resolve(cloudSyncPromise).catch(() => {}).then(() => clearAllEvents()).then(() => {
+          events = [];
+          render();
+          updateAccountControls();
+          setAccountStatus('Sessione terminata in un’altra scheda. Accedi di nuovo per continuare.');
+        }).catch(error => {
+          console.error(error);
+          updateAccountControls();
+          setAccountStatus('Sessione terminata in un’altra scheda; non è stato possibile svuotare la copia locale.', true);
+        });
+      } else if (event.newValue && !isAuthenticated) {
+        void restoreCloudSession();
+      }
+    }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void refreshWhenReturningToApp();
+  });
+}
+
 function openDatabase() {
-  return new Promise((resolve, reject) => {
+  if (database) return Promise.resolve(database);
+  if (databaseOpening) return databaseOpening;
+
+  databaseOpening = new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) {
       reject(new Error('Questo browser non supporta l’archivio locale richiesto.'));
       return;
@@ -373,13 +709,38 @@ function openDatabase() {
       }
     };
     request.onsuccess = () => {
-      database = request.result;
-      database.onversionchange = () => database.close();
-      resolve(database);
+      const openedDatabase = request.result;
+      openedDatabase.onversionchange = () => {
+        if (database === openedDatabase) database = null;
+        openedDatabase.close();
+      };
+      openedDatabase.onclose = () => {
+        if (database === openedDatabase) database = null;
+      };
+      database = openedDatabase;
+      resolve(openedDatabase);
     };
     request.onerror = () => reject(request.error || new Error('Impossibile aprire l’archivio locale.'));
     request.onblocked = () => reject(new Error('Chiudi eventuali altre schede di SmokeLog e riprova.'));
   });
+  databaseOpening.then(
+    () => { databaseOpening = null; },
+    () => { databaseOpening = null; }
+  );
+  return databaseOpening;
+}
+
+async function createDatabaseTransaction(mode) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const currentDatabase = await openDatabase();
+    try {
+      return currentDatabase.transaction(STORE_NAME, mode);
+    } catch (error) {
+      if (error.name !== 'InvalidStateError' || attempt > 0) throw error;
+      if (database === currentDatabase) database = null;
+    }
+  }
+  throw new Error('Impossibile riaprire l’archivio locale.');
 }
 
 function transactionDone(transaction) {
@@ -391,7 +752,7 @@ function transactionDone(transaction) {
 }
 
 async function readAllEvents() {
-  const tx = database.transaction(STORE_NAME, 'readonly');
+  const tx = await createDatabaseTransaction('readonly');
   const done = transactionDone(tx);
   const request = tx.objectStore(STORE_NAME).getAll();
   const result = await new Promise((resolve, reject) => {
@@ -403,19 +764,19 @@ async function readAllEvents() {
 }
 
 async function persistEvent(event) {
-  const tx = database.transaction(STORE_NAME, 'readwrite');
+  const tx = await createDatabaseTransaction('readwrite');
   tx.objectStore(STORE_NAME).add(event);
   await transactionDone(tx);
 }
 
 async function removeEvent(id) {
-  const tx = database.transaction(STORE_NAME, 'readwrite');
+  const tx = await createDatabaseTransaction('readwrite');
   tx.objectStore(STORE_NAME).delete(id);
   await transactionDone(tx);
 }
 
 async function replaceAllEvents(importedEvents) {
-  const tx = database.transaction(STORE_NAME, 'readwrite');
+  const tx = await createDatabaseTransaction('readwrite');
   const store = tx.objectStore(STORE_NAME);
   store.clear();
   for (const event of importedEvents) store.put(event);
@@ -423,7 +784,7 @@ async function replaceAllEvents(importedEvents) {
 }
 
 async function clearAllEvents() {
-  const tx = database.transaction(STORE_NAME, 'readwrite');
+  const tx = await createDatabaseTransaction('readwrite');
   tx.objectStore(STORE_NAME).clear();
   await transactionDone(tx);
 }
@@ -475,11 +836,25 @@ function withinRange(event, start, end) {
 function countTypes(source) {
   let cigarettes = 0;
   let joints = 0;
+  let halfCigarettes = 0;
+  let puzzetta = 0;
   for (const event of source) {
     if (event.type === 'cigarette') cigarettes += 1;
     if (event.type === 'joint') joints += 1;
+    if (event.type === 'half-cigarette') halfCigarettes += 1;
+    if (event.type === 'puzzetta') puzzetta += 1;
   }
-  return { total: cigarettes + joints, cigarettes, joints };
+  return {
+    total: cigarettes + joints + halfCigarettes + puzzetta,
+    cigarettes,
+    joints,
+    halfCigarettes,
+    puzzetta
+  };
+}
+
+function eventLabel(type) {
+  return Object.prototype.hasOwnProperty.call(EVENT_LABELS, type) ? EVENT_LABELS[type] : 'Registrazione';
 }
 
 function formatNumber(number) {
@@ -612,25 +987,25 @@ function renderHistory() {
     const title = document.createElement('strong');
     title.textContent = 'Ancora nessuna registrazione';
     const description = document.createElement('p');
-    description.textContent = 'Quando aggiungerai una sigaretta o una canna, la troverai qui.';
+    description.textContent = 'Quando aggiungerai una sigaretta o un Barnei, lo troverai qui.';
     empty.append(icon, title, description);
     elements.historyList.append(empty);
     return;
   }
 
   for (const event of visible) {
-    const isCigarette = event.type === 'cigarette';
+    const label = eventLabel(event.type);
     const row = document.createElement('div');
     row.className = 'history-item';
     const icon = document.createElement('span');
-    icon.className = `history-type-icon ${isCigarette ? 'cigarette' : 'joint'}`;
+    icon.className = `history-type-icon ${event.type}`;
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = isCigarette ? '↗' : '✳';
+    icon.textContent = event.type === 'cigarette' || event.type === 'half-cigarette' ? '↗' : '✳';
     const main = document.createElement('div');
     main.className = 'history-item-main';
     const title = document.createElement('p');
     title.className = 'history-item-title';
-    title.textContent = isCigarette ? 'Sigaretta' : 'Canna';
+    title.textContent = label;
     const date = document.createElement('p');
     date.className = 'history-item-date';
     date.textContent = formatDateTime(event.timestamp);
@@ -639,7 +1014,7 @@ function renderHistory() {
     remove.className = 'delete-event';
     remove.type = 'button';
     remove.textContent = '−';
-    remove.setAttribute('aria-label', `Elimina registrazione: ${isCigarette ? 'sigaretta' : 'canna'}, ${formatDateTime(event.timestamp)}`);
+    remove.setAttribute('aria-label', `Elimina registrazione: ${label}, ${formatDateTime(event.timestamp)}`);
     remove.addEventListener('click', () => handleDeleteEvent(event));
     row.append(icon, main, remove);
     elements.historyList.append(row);
@@ -655,6 +1030,8 @@ function render() {
   elements.todayTotalLabel.textContent = todayCounts.total === 1 ? 'registrazione' : 'registrazioni';
   elements.todayCigarettes.textContent = formatNumber(todayCounts.cigarettes);
   elements.todayJoints.textContent = formatNumber(todayCounts.joints);
+  elements.todayHalfCigarettes.textContent = formatNumber(todayCounts.halfCigarettes);
+  elements.todayPuzzetta.textContent = formatNumber(todayCounts.puzzetta);
 
   const labels = { day: 'Totale di oggi', week: 'Totale ultimi 7 giorni', month: 'Totale del mese', year: 'Totale dell’anno' };
   const periodEvents = filterForRange(activeRange, now);
@@ -663,6 +1040,8 @@ function render() {
   elements.periodTotal.textContent = formatNumber(counts.total);
   elements.periodCigarettes.textContent = formatNumber(counts.cigarettes);
   elements.periodJoints.textContent = formatNumber(counts.joints);
+  elements.periodHalfCigarettes.textContent = formatNumber(counts.halfCigarettes);
+  elements.periodPuzzetta.textContent = formatNumber(counts.puzzetta);
   renderChart(activeRange, periodEvents, now);
   renderHistory();
 }
@@ -675,8 +1054,8 @@ function showToast(message) {
 }
 
 async function handleAddEvent(type) {
-  if (cloudConfigured && !cloudSession) {
-    showToast('Accedi per salvare e sincronizzare le registrazioni.');
+  if (!isAuthenticated) {
+    openAuthenticationModal();
     return;
   }
   let uploaded = false;
@@ -690,7 +1069,7 @@ async function handleAddEvent(type) {
     events.push(event);
     events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     render();
-    showToast(type === 'cigarette' ? 'Sigaretta registrata.' : 'Canna registrata.');
+    showToast(`${eventLabel(type)} registrat${type === 'joint' ? 'o' : 'a'}.`);
   } catch (error) {
     console.error(error);
     showToast(uploaded ? 'Salvata online; aggiornamento locale non riuscito.' : 'Non salvata online: verifica la connessione e riprova.');
@@ -698,12 +1077,12 @@ async function handleAddEvent(type) {
 }
 
 async function handleDeleteEvent(event) {
-  if (cloudConfigured && !cloudSession) {
-    showToast('Accedi per gestire lo storico sincronizzato.');
+  if (!isAuthenticated) {
+    openAuthenticationModal();
     return;
   }
-  const typeLabel = event.type === 'cigarette' ? 'la sigaretta' : 'la canna';
-  if (!window.confirm(`Vuoi eliminare ${typeLabel} registrata il ${formatDateTime(event.timestamp)}?`)) return;
+  const typeLabel = eventLabel(event.type);
+  if (!window.confirm(`Vuoi eliminare la registrazione «${typeLabel}» del ${formatDateTime(event.timestamp)}?`)) return;
   try {
     if (cloudConfigured) {
       await supabaseRequest(`smokelog_events?id=eq.${encodeURIComponent(event.id)}`, { method: 'DELETE' });
@@ -732,6 +1111,10 @@ function downloadFile(filename, content, mimeType) {
 }
 
 function exportJson() {
+  if (!isAuthenticated) {
+    openAuthenticationModal();
+    return;
+  }
   const backup = {
     app: 'SmokeLog',
     schemaVersion: 1,
@@ -748,13 +1131,17 @@ function csvEscape(value) {
 }
 
 function exportCsv() {
+  if (!isAuthenticated) {
+    openAuthenticationModal();
+    return;
+  }
   const rows = [['id', 'tipo', 'data_ora_iso', 'data_locale', 'ora_locale']];
   const sorted = [...events].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   for (const event of sorted) {
     const date = new Date(event.timestamp);
     rows.push([
       event.id,
-      event.type === 'cigarette' ? 'Sigaretta' : 'Canna',
+      eventLabel(event.type),
       event.timestamp,
       date.toLocaleDateString('it-IT'),
       date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
@@ -772,7 +1159,7 @@ function validateBackup(parsed) {
   const seen = new Set();
   const validated = [];
   for (const item of parsed.events) {
-    if (!item || typeof item.id !== 'string' || !['cigarette', 'joint'].includes(item.type) || typeof item.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp))) {
+    if (!item || typeof item.id !== 'string' || !Object.hasOwn(EVENT_LABELS, item.type) || typeof item.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp))) {
       throw new Error('Il backup contiene una registrazione non valida. Nessun dato è stato modificato.');
     }
     let id = item.id;
@@ -787,7 +1174,10 @@ function validateBackup(parsed) {
 async function importJsonFile(file) {
   if (!file) return;
   try {
-    if (cloudConfigured && !cloudSession) throw new Error('Accedi prima di importare nello storico sincronizzato.');
+    if (!isAuthenticated) {
+      openAuthenticationModal();
+      return;
+    }
     const raw = await file.text();
     const parsed = JSON.parse(raw);
     const validated = validateBackup(parsed);
@@ -812,8 +1202,8 @@ async function importJsonFile(file) {
 }
 
 async function handleClearData() {
-  if (cloudConfigured && !cloudSession) {
-    showToast('Accedi per gestire lo storico sincronizzato.');
+  if (!isAuthenticated) {
+    openAuthenticationModal();
     return;
   }
   if (events.length === 0) {
@@ -875,6 +1265,8 @@ async function requestStoragePersistence() {
 function setupEventHandlers() {
   document.getElementById('add-cigarette').addEventListener('click', () => handleAddEvent('cigarette'));
   document.getElementById('add-joint').addEventListener('click', () => handleAddEvent('joint'));
+  document.getElementById('add-half-cigarette').addEventListener('click', () => handleAddEvent('half-cigarette'));
+  document.getElementById('add-puzzetta').addEventListener('click', () => handleAddEvent('puzzetta'));
   document.querySelectorAll('[data-range]').forEach(button => {
     button.addEventListener('click', () => {
       activeRange = button.dataset.range;
@@ -892,11 +1284,29 @@ function setupEventHandlers() {
   elements.importFile.addEventListener('change', () => importJsonFile(elements.importFile.files && elements.importFile.files[0]));
   document.getElementById('clear-data').addEventListener('click', handleClearData);
   document.getElementById('protect-storage').addEventListener('click', requestStoragePersistence);
-  elements.signIn.addEventListener('click', handleSignIn);
-  elements.signUp.addEventListener('click', handleSignUp);
+  elements.authForm.addEventListener('submit', event => {
+    event.preventDefault();
+    if (isPasswordRecovery) {
+      void handleSaveNewPassword();
+    } else if (authMode === 'signup') {
+      void handleSignUp();
+    } else {
+      void handleSignIn();
+    }
+  });
+  elements.signUp.addEventListener('click', () => setAuthMode('signup'));
+  elements.switchAuthMode.addEventListener('click', () => setAuthMode('signin'));
   elements.recoverPassword.addEventListener('click', handlePasswordRecovery);
-  elements.saveNewPassword.addEventListener('click', handleSaveNewPassword);
+  elements.resendConfirmation.addEventListener('click', handleResendConfirmation);
   elements.signOut.addEventListener('click', handleSignOut);
+  const updatePasswordConfirmationValidity = () => {
+    const mismatch = elements.confirmPassword.value
+      && elements.confirmPassword.value !== elements.accountPassword.value;
+    elements.confirmPassword.setCustomValidity(mismatch ? 'Le password non corrispondono.' : '');
+  };
+  elements.accountPassword.addEventListener('input', updatePasswordConfirmationValidity);
+  elements.confirmPassword.addEventListener('input', updatePasswordConfirmationValidity);
+  setupAuthenticationEvents();
 }
 
 async function init() {
@@ -916,9 +1326,6 @@ async function init() {
   if (cloudConfigured) {
     await restoreCloudSession();
   } else {
-    elements.signIn.hidden = true;
-    elements.signUp.hidden = true;
-    elements.recoverPassword.hidden = true;
     setAccountStatus('Sincronizzazione non configurata. Completa la configurazione Supabase descritta nel README.');
   }
 

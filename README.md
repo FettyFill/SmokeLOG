@@ -1,10 +1,10 @@
 # SmokeLog — diario personale
 
-Una Progressive Web App (PWA) per registrare separatamente sigarette e canne. L'interfaccia è realizzata con HTML, CSS e JavaScript senza framework. Con la configurazione Supabase, account e database online permettono di ritrovare lo stesso storico da browser e dispositivi diversi.
+Una Progressive Web App (PWA) per registrare separatamente sigarette e Barnei. L'interfaccia è realizzata con HTML, CSS e JavaScript senza framework. Con la configurazione Supabase, account e database online permettono di ritrovare lo stesso storico da browser e dispositivi diversi.
 
 ## Funzionalità
 
-- Registrazione di sigarette e canne con data e ora.
+- Registrazione di sigarette, Barnei, Mezza Siga e Puzzetta con data e ora.
 - Contatori per oggi, ultimi 7 giorni, mese corrente e anno corrente.
 - Grafico riepilogativo per fascia oraria, giorno, settimana del mese o mese dell'anno.
 - Ultime 10 registrazioni, con possibilità di eliminare un evento.
@@ -17,13 +17,30 @@ Una Progressive Web App (PWA) per registrare separatamente sigarette e canne. L'
 La sincronizzazione non è attiva finché non configuri un progetto Supabase. Non inserire mai la `service_role` key nel sito: il repository è pubblico. Il codice del browser usa solo la chiave pubblica anon/publishable; l'accesso ai dati è limitato dalle policy Row Level Security.
 
 1. Crea un progetto su [Supabase](https://supabase.com/) e copia il suo **Project URL** e la chiave **publishable** (o `anon` legacy) dalle impostazioni API.
-2. In Supabase apri **SQL Editor**, esegui il contenuto di [`supabase-schema.sql`](./supabase-schema.sql). Crea la tabella, le policy che isolano i dati per account e la funzione usata per sostituire lo storico durante il ripristino di un backup.
+2. In Supabase apri **SQL Editor**, esegui il contenuto aggiornato di [`supabase-schema.sql`](./supabase-schema.sql). Crea la tabella, le policy che isolano i dati per account e la funzione usata per sostituire lo storico durante il ripristino di un backup; aggiorna inoltre i tipi di evento ammessi.
 3. In **Authentication → URL Configuration**, imposta come **Site URL** l'indirizzo GitHub Pages, ad esempio `https://fettyfill.github.io/SmokeLOG/`, e aggiungi lo stesso indirizzo tra i redirect consentiti. Per provare localmente aggiungi anche l'indirizzo HTTPS o `http://localhost` usato dal server locale.
 4. Inserisci URL e chiave pubblica in [`supabase-config.js`](./supabase-config.js), sostituendo i valori segnaposto.
 5. Pubblica tutti i file, incluso `supabase-config.js` e `supabase-schema.sql`, su GitHub Pages. La chiave publishable/anon è visibile nel browser per definizione: **non** è una password e non va confusa con la `service_role` key.
-6. Apri il sito, crea un account con la tua email, conferma l'indirizzo dal messaggio ricevuto se richiesto e accedi. Da un altro dispositivo usa lo stesso account per caricare lo storico.
+6. Apri il sito e scegli **Accedi o registrati → Non hai un account? Registrati**. Inserisci email, password e conferma password; il link inviato da Supabase riporta al sito autorizzato. Dopo la conferma, accedi con lo stesso account da ogni dispositivo.
 
-Se abiliti la conferma email, il link deve riportare all'indirizzo GitHub Pages configurato. Le registrazioni aggiunte, cancellate o importate mentre si è autenticati sono sincronizzate sul database online; serve una connessione internet per scrivere o aggiornare lo storico cloud. L'archivio locale IndexedDB è una copia di appoggio, non la copia autorevole.
+Se abiliti la conferma email, il link deve riportare all'indirizzo GitHub Pages configurato. Il browser o l'app di posta possono aprire il link in una nuova scheda: non è possibile forzare il browser a riutilizzare la scheda esistente, ma SmokeLog aggiorna la scheda già aperta quando torni ad essa. In Supabase vai in **Authentication → URL Configuration** e consenti l'URL esatto della pagina pubblicata, incluso il percorso `/SmokeLOG/`. Le registrazioni aggiunte, cancellate o importate mentre si è autenticati sono sincronizzate sul database online; serve una connessione internet per scrivere o aggiornare lo storico cloud. L'archivio locale IndexedDB è una copia di appoggio, non la copia autorevole.
+
+### Email di registrazione e conferma
+
+L'app invia a Supabase la richiesta di registrazione e l'indirizzo di ritorno. Una risposta positiva significa che Supabase ha accettato la richiesta, non garantisce che il provider abbia consegnato l'email. Il mittente SMTP predefinito può inviare solo a indirizzi associati all'organizzazione Supabase e ha un limite attuale di 2 email all'ora; non è il servizio adatto per consegnare conferme agli indirizzi degli utenti.
+
+Se il messaggio non arriva:
+
+1. Controlla **Authentication → Users**: verifica che l'utente sia stato creato e se l'email risulta confermata. Non serve cercare un account nella tabella `smokelog_events`.
+2. Controlla **Authentication → Logs** per errori di invio o limiti di frequenza; verifica anche spam e che l'indirizzo inserito sia corretto.
+3. Verifica **Authentication → URL Configuration**: il redirect consentito deve includere l'URL completo del sito, compreso il percorso `/SmokeLOG/`.
+4. Per inviare email agli utenti, configura un provider SMTP personale in **Supabase Dashboard → Authentication → SMTP Settings**. Servono host, porta, credenziali SMTP e un mittente appartenente a un dominio verificato presso il provider; configura anche i record DNS richiesti (per esempio SPF e DKIM). Consulta la [guida ufficiale Supabase per SMTP](https://supabase.com/docs/guides/auth/auth-smtp).
+
+Se l'account è in attesa di conferma, SmokeLog mostra il pulsante evidenziato **Invia di nuovo l’email di conferma**. La risposta positiva conferma solo che Supabase ha accettato la richiesta di reinvio, non che l'email sia stata recapitata. Nei log, `User repeated signup` significa che è stata richiesta di nuovo la registrazione per un indirizzo già presente: ripetere **Registrati** non è un modo affidabile per reinviare la conferma. Non disattivare la conferma email per aggirare un problema di consegna. Se la registrazione appare in **Users** ma non arriva nessuna email, la diagnosi va fatta nei log e nelle impostazioni email del progetto Supabase.
+
+Gli account sono elencati in **Authentication → Users**; la tabella `public.smokelog_events` contiene soltanto le registrazioni, quindi resta vuota finché un utente non confermato effettua l'accesso e aggiunge un evento.
+
+L'app richiede un account per accedere a qualunque funzione: finché non hai effettuato l'accesso, lo sfondo resta bloccato e il modulo di accesso/registrazione si apre dal pulsante centrale.
 
 ## Aprire il progetto in Visual Studio Code
 

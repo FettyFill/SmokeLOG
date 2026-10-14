@@ -5,9 +5,19 @@ create table if not exists public.smokelog_events (
   "timestamp" timestamptz not null
 );
 
+alter table public.smokelog_events
+  drop constraint if exists smokelog_events_type_check;
+
+alter table public.smokelog_events
+  add constraint smokelog_events_type_check
+  check (type in ('cigarette', 'joint', 'half-cigarette', 'puzzetta'));
+
 alter table public.smokelog_events enable row level security;
 
 grant select, insert, update, delete on public.smokelog_events to authenticated;
+
+drop policy if exists "Users can access only their own SmokeLog events"
+  on public.smokelog_events;
 
 create policy "Users can access only their own SmokeLog events"
   on public.smokelog_events

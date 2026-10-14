@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#111b25">
-  <meta name="description" content="Un diario personale per tenere traccia di sigarette e canne, con sincronizzazione privata tramite account.">
+  <meta name="description" content="Un diario personale per tenere traccia di sigarette e Barnei, con sincronizzazione privata tramite account.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="SmokeLog">
@@ -15,7 +15,7 @@
   <title>SmokeLog · Il tuo diario</title>
 </head>
 <body>
-  <div class="app-frame">
+  <div class="app-frame is-locked" inert>
     <header class="topbar">
       <div class="brand-lockup">
         <img class="brand-icon" src="./icons/icon-192.png" alt="" width="44" height="44">
@@ -40,7 +40,9 @@
         </div>
         <div class="today-split" aria-live="polite">
           <span><span class="mini-dot dot-cigarette"></span><strong id="today-cigarettes">0</strong> sigarette</span>
-          <span><span class="mini-dot dot-joint"></span><strong id="today-joints">0</strong> canne</span>
+          <span><span class="mini-dot dot-joint"></span><strong id="today-joints">0</strong> Barnei</span>
+          <span><span class="mini-dot dot-half-cigarette"></span><strong id="today-half-cigarettes">0</strong> Mezza Siga</span>
+          <span><span class="mini-dot dot-puzzetta"></span><strong id="today-puzzetta">0</strong> Puzzetta</span>
         </div>
         <div class="today-card-orb orb-one" aria-hidden="true"></div>
         <div class="today-card-orb orb-two" aria-hidden="true"></div>
@@ -62,7 +64,17 @@
           </button>
           <button class="record-button joint-button" id="add-joint" type="button">
             <span class="record-symbol joint-symbol" aria-hidden="true"><span></span></span>
-            <span class="record-button-copy"><strong>Canna</strong><small>Aggiungi una</small></span>
+            <span class="record-button-copy"><strong>Barnei</strong><small>Aggiungi una</small></span>
+            <span class="record-plus" aria-hidden="true">+</span>
+          </button>
+          <button class="record-button half-cigarette-button" id="add-half-cigarette" type="button">
+            <span class="record-symbol half-cigarette-symbol" aria-hidden="true"><span></span></span>
+            <span class="record-button-copy"><strong>Mezza Siga</strong><small>Aggiungi una</small></span>
+            <span class="record-plus" aria-hidden="true">+</span>
+          </button>
+          <button class="record-button puzzetta-button" id="add-puzzetta" type="button">
+            <span class="record-symbol puzzetta-symbol" aria-hidden="true"><span></span></span>
+            <span class="record-button-copy"><strong>Puzzetta</strong><small>Aggiungi una</small></span>
             <span class="record-plus" aria-hidden="true">+</span>
           </button>
         </div>
@@ -94,8 +106,18 @@
             <span class="stat-footnote">nel periodo</span>
           </article>
           <article class="stat-card">
-            <span class="stat-label">Canne</span>
+            <span class="stat-label">Barnei</span>
             <div class="stat-value joint-color" id="period-joints">0</div>
+            <span class="stat-footnote">nel periodo</span>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Mezza Siga</span>
+            <div class="stat-value half-cigarette-color" id="period-half-cigarettes">0</div>
+            <span class="stat-footnote">nel periodo</span>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Puzzetta</span>
+            <div class="stat-value puzzetta-color" id="period-puzzetta">0</div>
             <span class="stat-footnote">nel periodo</span>
           </article>
         </div>
@@ -123,7 +145,7 @@
           <div class="empty-state">
             <span class="empty-icon" aria-hidden="true">＋</span>
             <strong>Ancora nessuna registrazione</strong>
-            <p>Quando aggiungerai una sigaretta o una canna, la troverai qui.</p>
+            <p>Quando aggiungerai una sigaretta o un Barnei, lo troverai qui.</p>
           </div>
         </div>
         <p class="history-footnote" id="history-footnote">Vengono mostrate le 10 registrazioni più recenti.</p>
@@ -134,19 +156,7 @@
         <div class="data-tools-content">
           <h3>Account e sincronizzazione</h3>
           <p>Accedi allo stesso account da ogni dispositivo: lo storico viene conservato nel database online e ricaricato quando apri l’app. La password non viene salvata da SmokeLog. I dati sono riservati al tuo account, ma non sono cifrati end-to-end.</p>
-          <p id="account-status" role="status" aria-live="polite">Verifica configurazione account…</p>
-          <div class="account-fields">
-            <label for="account-email">Email</label>
-            <input id="account-email" type="email" autocomplete="username" required>
-            <label for="account-password">Password</label>
-            <input id="account-password" type="password" autocomplete="current-password" minlength="6" required>
-          </div>
-          <div class="backup-buttons account-actions">
-            <button type="button" class="secondary-button" id="sign-in">Accedi</button>
-            <button type="button" class="secondary-button" id="sign-up">Crea account</button>
-            <button type="button" class="secondary-button" id="recover-password">Recupera password</button>
-            <button type="button" class="secondary-button" id="save-new-password" hidden>Imposta nuova password</button>
-          </div>
+          <p id="account-status" role="status" aria-live="polite">Non hai effettuato l’accesso.</p>
           <div id="signed-in-controls" class="backup-buttons account-actions" hidden>
             <button type="button" class="secondary-button" id="sign-out">Esci dall’account</button>
           </div>
@@ -179,6 +189,41 @@
       <p class="version-label">SmokeLog · versione 1.0</p>
     </footer>
   </div>
+
+  <div id="auth-gate" class="auth-gate">
+    <div class="auth-gate-card">
+      <p class="eyebrow">ACCESSO RICHIESTO</p>
+      <p id="auth-gate-message">Accedi o crea un account per usare SmokeLog.</p>
+      <button type="button" class="primary-button" id="open-auth-modal">Accedi o registrati</button>
+    </div>
+  </div>
+
+  <dialog id="auth-modal" class="auth-modal" aria-labelledby="auth-title">
+    <button type="button" class="auth-close" id="close-auth-modal" aria-label="Chiudi finestra di accesso">×</button>
+    <p class="eyebrow">SMOKELOG</p>
+    <h2 id="auth-title">Accedi al tuo account</h2>
+    <p id="auth-intro" class="auth-intro">Lo storico è privato e sincronizzato sul tuo account.</p>
+    <form id="auth-form" novalidate>
+      <p id="account-modal-status" class="auth-status" role="status" aria-live="polite">Inserisci email e password per continuare.</p>
+      <div class="account-fields">
+        <label for="account-email">Email</label>
+        <input id="account-email" type="email" autocomplete="username" required>
+        <label for="account-password">Password</label>
+        <input id="account-password" type="password" autocomplete="current-password" minlength="6" required>
+        <label id="confirm-password-label" for="confirm-password" hidden>Conferma password</label>
+        <input id="confirm-password" type="password" autocomplete="new-password" minlength="6" hidden>
+      </div>
+      <div class="auth-actions">
+        <button type="submit" class="primary-button" id="sign-in">Accedi</button>
+        <button type="button" class="secondary-button" id="sign-up">Crea account</button>
+        <button type="submit" class="primary-button" id="register-account" hidden>Registrati</button>
+        <button type="button" class="primary-button" id="resend-confirmation" hidden>Invia di nuovo l’email di conferma</button>
+        <button type="button" class="text-button" id="recover-password">Recupera password</button>
+        <button type="submit" class="primary-button" id="save-new-password" hidden>Imposta nuova password</button>
+        <button type="button" class="text-button" id="switch-auth-mode" hidden>Torna all’accesso</button>
+      </div>
+    </form>
+  </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="./supabase-config.js" defer></script>
