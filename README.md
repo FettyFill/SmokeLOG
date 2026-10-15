@@ -5,10 +5,13 @@ Una Progressive Web App (PWA) per registrare separatamente sigarette e Barnei. L
 ## Funzionalità
 
 - Registrazione di sigarette, Barnei, Mezza Siga, Puzzetta e Cartuccia Puff con data e ora.
+- Registrazione di acquisti per Pacchetto di Siga, Fumo/Weed, Pacchetto Terea, Cartuccia Puff e Pacchetto di Tabacco, con importo in euro.
+- Riepilogo delle spese giornaliere e statistiche per categoria nel periodo selezionato, insieme alle statistiche dei consumi.
+- Selezione di una categoria nel riepilogo per consultare le registrazioni o gli acquisti del periodo e rimuovere singole voci.
 - Contatori per oggi, ultimi 7 giorni, mese corrente e anno corrente.
 - Grafico riepilogativo per fascia oraria, giorno, settimana del mese o mese dell'anno.
 - Ultime 10 registrazioni, con possibilità di eliminare un evento.
-- Esportazione JSON (backup ripristinabile) e CSV; importazione JSON e cancellazione completa dello storico.
+- Esportazione JSON (backup ripristinabile di consumi e acquisti) e CSV; importazione JSON e cancellazione completa dello storico.
 - Account email/password e sincronizzazione dello storico con Supabase.
 - Manifest, icone e service worker per installazione e caricamento dell'interfaccia offline.
 
@@ -17,13 +20,13 @@ Una Progressive Web App (PWA) per registrare separatamente sigarette e Barnei. L
 La sincronizzazione non è attiva finché non configuri un progetto Supabase. Non inserire mai la `service_role` key nel sito: il repository è pubblico. Il codice del browser usa solo la chiave pubblica anon/publishable; l'accesso ai dati è limitato dalle policy Row Level Security.
 
 1. Crea un progetto su [Supabase](https://supabase.com/) e copia il suo **Project URL** e la chiave **publishable** (o `anon` legacy) dalle impostazioni API.
-2. In Supabase apri **SQL Editor**, esegui il contenuto aggiornato di [`supabase-schema.sql`](./supabase-schema.sql). Crea la tabella, le policy che isolano i dati per account e la funzione usata per sostituire lo storico durante il ripristino di un backup; aggiorna inoltre i tipi di evento ammessi. Quando aggiungi una nuova tipologia a SmokeLog, riesegui questo script sul progetto esistente per abilitarne la sincronizzazione.
+2. In Supabase apri **SQL Editor**, esegui il contenuto aggiornato di [`supabase-schema.sql`](./supabase-schema.sql). Crea le tabelle per consumi e acquisti, le policy che isolano i dati per account e le funzioni usate per sostituire lo storico durante il ripristino di un backup. Quando aggiungi una nuova tipologia a SmokeLog, riesegui questo script sul progetto esistente per abilitarne la sincronizzazione.
 3. In **Authentication → URL Configuration**, imposta come **Site URL** l'indirizzo GitHub Pages, ad esempio `https://fettyfill.github.io/SmokeLOG/`, e aggiungi lo stesso indirizzo tra i redirect consentiti. Per provare localmente aggiungi anche l'indirizzo HTTPS o `http://localhost` usato dal server locale.
 4. Inserisci URL e chiave pubblica in [`supabase-config.js`](./supabase-config.js), sostituendo i valori segnaposto.
 5. Pubblica tutti i file, incluso `supabase-config.js` e `supabase-schema.sql`, su GitHub Pages. La chiave publishable/anon è visibile nel browser per definizione: **non** è una password e non va confusa con la `service_role` key.
 6. Apri il sito e scegli **Accedi o registrati → Non hai un account? Registrati**. Inserisci email, password e conferma password; il link inviato da Supabase riporta al sito autorizzato. Dopo la conferma, accedi con lo stesso account da ogni dispositivo.
 
-Se abiliti la conferma email, il link deve riportare all'indirizzo GitHub Pages configurato. Il browser o l'app di posta possono aprire il link in una nuova scheda: non è possibile forzare il browser a riutilizzare la scheda esistente, ma SmokeLog aggiorna la scheda già aperta quando torni ad essa. In Supabase vai in **Authentication → URL Configuration** e consenti l'URL esatto della pagina pubblicata, incluso il percorso `/SmokeLOG/`. Le registrazioni aggiunte, cancellate o importate mentre si è autenticati sono sincronizzate sul database online; serve una connessione internet per scrivere o aggiornare lo storico cloud. L'archivio locale IndexedDB è una copia di appoggio, non la copia autorevole.
+Se abiliti la conferma email, il link deve riportare all'indirizzo GitHub Pages configurato. Il browser o l'app di posta possono aprire il link in una nuova scheda: non è possibile forzare il browser a riutilizzare la scheda esistente, ma SmokeLog aggiorna la scheda già aperta quando torni ad essa. In Supabase vai in **Authentication → URL Configuration** e consenti l'URL esatto della pagina pubblicata, incluso il percorso `/SmokeLOG/`. Consumi e acquisti sono sincronizzati in tabelle cloud separate; serve una connessione internet per aggiungere, cancellare o aggiornare i dati online. L'archivio locale IndexedDB è una copia di appoggio, non la copia autorevole.
 
 SmokeLog conserva la sessione sul dispositivo e prova a ripristinarla all'apertura della web app. Il token di accesso viene rinnovato quando necessario; non viene chiesto di accedere di nuovo alla sua normale scadenza. Se la sessione viene revocata o si cancellano i dati del browser, sarà necessario autenticarsi di nuovo.
 
@@ -44,7 +47,7 @@ Se l'account è in attesa di conferma, SmokeLog mostra il pulsante evidenziato *
 
 Se nei log compaiono `Invalid Refresh Token: Refresh Token Not Found`, il browser sta tentando di riusare una sessione locale non più valida. SmokeLog rimuove questa sessione e richiede un nuovo accesso; questo non elimina lo storico cloud. Il log `Mail.send` insieme a `User confirmation requested` indica che Supabase ha avviato il flusso di invio, ma non certifica la consegna alla casella.
 
-Gli account sono elencati in **Authentication → Users**; la tabella `public.smokelog_events` contiene soltanto le registrazioni, quindi resta vuota finché un utente non confermato effettua l'accesso e aggiunge un evento.
+Gli account sono elencati in **Authentication → Users**; `public.smokelog_events` contiene i consumi e `public.smokelog_purchases` gli acquisti. Le tabelle restano vuote finché un utente non confermato effettua l'accesso e aggiunge dati.
 
 L'app richiede un account per accedere a qualunque funzione: finché non hai effettuato l'accesso, lo sfondo resta bloccato e il modulo di accesso/registrazione si apre dal pulsante centrale.
 
@@ -64,13 +67,13 @@ L'app richiede un account per accedere a qualunque funzione: finché non hai eff
 
 ## Dove sono memorizzati i dati?
 
-Lo storico è salvato nel progetto Supabase e associato all'account autenticato; le policy RLS impediscono agli account di leggere o modificare gli eventi degli altri utenti. La connessione al servizio usa HTTPS. I dati **non** sono cifrati end-to-end: il progetto Supabase e i suoi amministratori possono tecnicamente accedere al database. SmokeLog non usa analytics né invia i dati a servizi diversi da Supabase per l'autenticazione e la sincronizzazione.
+Consumi e acquisti sono salvati in tabelle separate nel progetto Supabase e associati all'account autenticato; le policy RLS impediscono agli account di leggere o modificare i dati degli altri utenti. La connessione al servizio usa HTTPS. I dati **non** sono cifrati end-to-end: il progetto Supabase e i suoi amministratori possono tecnicamente accedere al database. SmokeLog non usa analytics né invia i dati a servizi diversi da Supabase per l'autenticazione e la sincronizzazione.
 
-- Cancellare cookie, dati del browser o resettare il dispositivo rimuove la sessione e la copia locale, ma non lo storico online. Accedi di nuovo al tuo account per recuperarlo.
+- Cancellare cookie, dati del browser o resettare il dispositivo rimuove la sessione e le copie locali, ma non i dati online. Accedi di nuovo al tuo account per recuperarli.
 - Esporta comunque periodicamente **Backup e gestione dati → Esporta backup JSON** e conserva il file in un luogo sicuro, come copia indipendente dal servizio online.
 - Un backup JSON esportato contiene abitudini personali: trattalo come un file privato. Il CSV è utile per consultare lo storico, ma il JSON è il formato da usare per ripristinarlo.
-- L'importazione JSON sostituisce lo storico dell'account sincronizzato dopo una conferma. Esporta un backup prima se vuoi conservare i dati attuali.
-- Il pulsante **Esci dall'account** termina la sessione e rimuove la copia locale dal dispositivo; lo storico remoto resta nell'account.
+- L'importazione JSON sostituisce consumi e acquisti dell'account sincronizzato dopo una conferma. Esporta un backup prima se vuoi conservare i dati attuali.
+- Il pulsante **Esci dall'account** termina la sessione e rimuove la copia locale dei consumi e degli acquisti dal dispositivo; i dati remoti restano nell'account.
 
 ## Personalizzazione
 
@@ -78,7 +81,7 @@ Lo storico è salvato nel progetto Supabase e associato all'account autenticato;
 - Etichette e struttura della pagina: `index.html`.
 - Database locale, autenticazione, sincronizzazione e import/export: `app.js`.
 - URL e chiave pubblica Supabase: `supabase-config.js`.
-- Tabella e policy di accesso: `supabase-schema.sql`.
+- Tabelle, funzioni di ripristino e policy di accesso: `supabase-schema.sql`.
 - Nome, colori e icone: `manifest.webmanifest` e `icons/`.
 - Cache e funzionamento offline dell'interfaccia: `service-worker.js`.
 

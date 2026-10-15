@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#111b25">
-  <meta name="description" content="Un diario personale per tenere traccia di sigarette e Barnei, con sincronizzazione privata tramite account.">
+  <meta name="description" content="Un diario personale per monitorare consumi e spese, con sincronizzazione privata tramite account.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="SmokeLog">
@@ -49,15 +49,17 @@
         <div class="today-card-orb orb-two" aria-hidden="true"></div>
       </section>
 
-      <section class="record-section" aria-labelledby="record-heading">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">REGISTRA</p>
-            <h2 id="record-heading">Hai fumato?</h2>
+      <section class="today-expense-card" aria-label="Spesa di oggi">
+        <span class="money-mark" aria-hidden="true">€</span>
+        <div><p class="eyebrow">SPESE DI OGGI</p><strong id="today-expense-total">€ 0,00</strong><small id="today-expense-count">Nessun acquisto registrato</small></div>
+      </section>
+
+      <section class="record-workspace" aria-label="Registra consumi e acquisti">
+        <section class="activity-panel consumption-panel" aria-labelledby="record-heading">
+          <div class="section-heading">
+            <div><p class="eyebrow">CONSUMI</p><h2 id="record-heading">Hai fumato?</h2></div>
           </div>
-          <p class="section-note">Un tocco per aggiungere</p>
-        </div>
-        <div class="record-buttons">
+          <div class="record-buttons">
           <button class="record-button cigarette-button" id="add-cigarette" type="button">
             <span class="record-symbol cigarette-symbol" aria-hidden="true"><span></span></span>
             <span class="record-button-copy"><strong>Sigaretta</strong><small>Aggiungi una</small></span>
@@ -83,16 +85,53 @@
             <span class="record-button-copy"><strong>Cartuccia Puff</strong><small>Aggiungi una</small></span>
             <span class="record-plus" aria-hidden="true">+</span>
           </button>
-        </div>
-        <p class="microcopy">Ogni tocco registra data e ora. Puoi correggere gli errori dallo storico.</p>
+          </div>
+        </section>
+        <section class="activity-panel purchase-panel" aria-labelledby="purchase-heading">
+          <div class="section-heading">
+            <div><p class="eyebrow">ACQUISTI</p><h2 id="purchase-heading">Cos'hai comprato?</h2></div>
+          </div>
+          <div class="record-buttons purchase-buttons">
+            <button class="record-button purchase-button purchase-cigarette" id="buy-cigarette-pack" type="button" data-purchase-type="cigarette-pack">
+              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
+              <span class="record-button-copy"><strong>Pacchetto di Siga</strong><small>Registra la spesa</small></span>
+              <span class="record-plus" aria-hidden="true">+</span>
+            </button>
+            <button class="record-button purchase-button purchase-weed" id="buy-weed" type="button" data-purchase-type="weed">
+              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
+              <span class="record-button-copy"><strong>Fumo/Weed</strong><small>Registra la spesa</small></span>
+              <span class="record-plus" aria-hidden="true">+</span>
+            </button>
+            <button class="record-button purchase-button purchase-terea" id="buy-terea-pack" type="button" data-purchase-type="terea-pack">
+              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
+              <span class="record-button-copy"><strong>Pacchetto Terea</strong><small>Registra la spesa</small></span>
+              <span class="record-plus" aria-hidden="true">+</span>
+            </button>
+            <button class="record-button purchase-button purchase-puff" id="buy-puff-cartridge" type="button" data-purchase-type="puff-cartridge">
+              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
+              <span class="record-button-copy"><strong>Cartuccia Puff</strong><small>Registra la spesa</small></span>
+              <span class="record-plus" aria-hidden="true">+</span>
+            </button>
+            <button class="record-button purchase-button purchase-tobacco" id="buy-tobacco-pack" type="button" data-purchase-type="tobacco-pack">
+              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
+              <span class="record-button-copy"><strong>Pacchetto di Tabacco</strong><small>Registra la spesa</small></span>
+              <span class="record-plus" aria-hidden="true">+</span>
+            </button>
+          </div>
+        </section>
       </section>
+      <p class="microcopy workspace-note">Tocca un acquisto per inserire l'importo pagato. Consumi e spese vengono salvati separatamente.</p>
 
       <section class="stats-section" aria-labelledby="stats-heading">
         <div class="section-heading stats-title-row">
           <div>
             <p class="eyebrow">IL QUADRO GENERALE</p>
-            <h2 id="stats-heading">Le tue statistiche</h2>
+            <h2 id="stats-heading">Spese e consumi</h2>
           </div>
+        </div>
+        <div class="stats-view-switch" role="group" aria-label="Vista delle statistiche">
+          <button type="button" class="stats-view-button is-active" data-stats-view="expenses" aria-pressed="true">Spese</button>
+          <button type="button" class="stats-view-button" data-stats-view="consumption" aria-pressed="false">Quantità consumate</button>
         </div>
         <div class="range-switch" role="group" aria-label="Periodo delle statistiche">
           <button type="button" class="range-button is-active" data-range="day" aria-pressed="true">Oggi</button>
@@ -100,39 +139,56 @@
           <button type="button" class="range-button" data-range="month" aria-pressed="false">Mese</button>
           <button type="button" class="range-button" data-range="year" aria-pressed="false">Anno</button>
         </div>
-        <div class="stats-grid">
+        <div id="expense-view" class="stats-view-content">
+          <section class="expense-summary" aria-labelledby="expense-heading">
+          <div class="expense-total-card">
+            <div><p class="eyebrow">TOTALE SPESO</p><h3 id="expense-heading">Nel periodo</h3></div>
+            <strong id="period-expense-total">€ 0,00</strong>
+          </div>
+          <div class="expense-category-grid" id="expense-category-grid"></div>
+          <article class="expense-chart-card">
+            <div class="chart-heading">
+              <div><h3>Spese per categoria</h3><p>Confronto nel periodo selezionato</p></div>
+            </div>
+            <div id="expense-bars" class="expense-bars" aria-label="Grafico delle spese per categoria"></div>
+          </article>
+          </section>
+        </div>
+        <div id="consumption-view" class="stats-view-content" hidden>
+          <h3 class="consumption-stats-heading">Quantità consumate</h3>
+          <div class="stats-grid">
           <article class="stat-card stat-total-card">
             <span class="stat-label" id="period-label">Totale di oggi</span>
             <div class="stat-value" id="period-total">0</div>
             <span class="stat-footnote">registrazioni</span>
           </article>
-          <article class="stat-card">
+          <button type="button" class="stat-card category-stat-card" data-event-type="cigarette">
             <span class="stat-label">Sigarette</span>
-            <div class="stat-value cigarette-color" id="period-cigarettes">0</div>
-            <span class="stat-footnote">nel periodo</span>
-          </article>
-          <article class="stat-card">
+            <strong class="stat-value cigarette-color" id="period-cigarettes">0</strong>
+            <span class="stat-footnote">nel periodo · dettagli</span>
+          </button>
+          <button type="button" class="stat-card category-stat-card" data-event-type="joint">
             <span class="stat-label">Barnei</span>
-            <div class="stat-value joint-color" id="period-joints">0</div>
-            <span class="stat-footnote">nel periodo</span>
-          </article>
-          <article class="stat-card">
+            <strong class="stat-value joint-color" id="period-joints">0</strong>
+            <span class="stat-footnote">nel periodo · dettagli</span>
+          </button>
+          <button type="button" class="stat-card category-stat-card" data-event-type="half-cigarette">
             <span class="stat-label">Mezza Siga</span>
-            <div class="stat-value half-cigarette-color" id="period-half-cigarettes">0</div>
-            <span class="stat-footnote">nel periodo</span>
-          </article>
-          <article class="stat-card">
+            <strong class="stat-value half-cigarette-color" id="period-half-cigarettes">0</strong>
+            <span class="stat-footnote">nel periodo · dettagli</span>
+          </button>
+          <button type="button" class="stat-card category-stat-card" data-event-type="puzzetta">
             <span class="stat-label">Puzzetta</span>
-            <div class="stat-value puzzetta-color" id="period-puzzetta">0</div>
-            <span class="stat-footnote">nel periodo</span>
-          </article>
-          <article class="stat-card">
+            <strong class="stat-value puzzetta-color" id="period-puzzetta">0</strong>
+            <span class="stat-footnote">nel periodo · dettagli</span>
+          </button>
+          <button type="button" class="stat-card category-stat-card" data-event-type="puff">
             <span class="stat-label">Cartuccia Puff</span>
-            <div class="stat-value puff-color" id="period-puff">0</div>
-            <span class="stat-footnote">nel periodo</span>
-          </article>
-        </div>
-        <article class="chart-card">
+            <strong class="stat-value puff-color" id="period-puff">0</strong>
+            <span class="stat-footnote">nel periodo · dettagli</span>
+          </button>
+          </div>
+          <article class="chart-card">
           <div class="chart-heading">
             <div>
               <h3 id="chart-title">Distribuzione di oggi</h3>
@@ -141,7 +197,8 @@
             <span class="chart-total-pill" id="chart-total-pill">0 totali</span>
           </div>
           <div id="chart-bars" class="chart-bars" aria-label="Grafico delle registrazioni"></div>
-        </article>
+          </article>
+        </div>
       </section>
 
       <section class="history-section" aria-labelledby="history-heading">
@@ -162,18 +219,27 @@
         <p class="history-footnote" id="history-footnote">Vengono mostrate le 10 registrazioni più recenti.</p>
       </section>
 
+      <section class="history-section purchase-history-section" aria-labelledby="purchase-history-heading">
+        <div class="section-heading history-heading-row">
+          <div><p class="eyebrow">PORTAFOGLIO</p><h2 id="purchase-history-heading">Ultimi acquisti</h2></div>
+          <span class="history-count" id="purchase-history-count">0 acquisti</span>
+        </div>
+        <div class="history-card" id="purchase-history-list" aria-live="polite"></div>
+        <p class="history-footnote" id="purchase-history-footnote">Puoi rimuovere un acquisto dallo storico.</p>
+      </section>
+
       <details class="data-tools">
         <summary><span class="settings-summary-icon" aria-hidden="true">↕</span><span><strong>Backup e gestione dati</strong><small>Esporta, ripristina o elimina lo storico</small></span><span class="summary-chevron" aria-hidden="true">⌄</span></summary>
         <div class="data-tools-content">
           <h3>Account e sincronizzazione</h3>
-          <p>Accedi allo stesso account da ogni dispositivo: lo storico viene conservato nel database online e ricaricato quando apri l’app. La password non viene salvata da SmokeLog. I dati sono riservati al tuo account, ma non sono cifrati end-to-end.</p>
+          <p>Accedi allo stesso account da ogni dispositivo: consumi e acquisti vengono conservati in tabelle separate nel database online e ricaricati quando apri l’app. La password non viene salvata da SmokeLog. I dati sono riservati al tuo account, ma non sono cifrati end-to-end.</p>
           <p id="account-status" role="status" aria-live="polite">Non hai effettuato l’accesso.</p>
           <div id="signed-in-controls" class="backup-buttons account-actions" hidden>
             <button type="button" class="secondary-button" id="sign-out">Esci dall’account</button>
           </div>
           <p>Il reset del browser o del dispositivo elimina la sessione, non lo storico online: installa o apri SmokeLog e accedi di nuovo. Esporta comunque un backup JSON periodico.</p>
           <h3>Archivio locale e backup</h3>
-          <p>Una copia locale viene mantenuta in questo browser per visualizzare lo storico. La protezione del browser dalla rimozione automatica non impedisce la cancellazione manuale dei dati del sito.</p>
+          <p>Consumi e acquisti sono conservati in archivi separati su questo browser e sincronizzati separatamente con il tuo account. La protezione del browser dalla rimozione automatica non impedisce la cancellazione manuale dei dati del sito.</p>
           <p id="storage-status" role="status" aria-live="polite">Controllo della protezione dell’archivio…</p>
           <div class="backup-buttons">
             <button type="button" class="secondary-button" id="protect-storage">Proteggi dati su questo dispositivo</button>
@@ -186,7 +252,7 @@
             <input type="file" id="import-file" accept=".json,application/json" hidden>
           </div>
           <div class="danger-zone">
-            <div><strong>Elimina tutte le registrazioni</strong><p>Questa azione non si può annullare. Esporta prima un backup se vuoi conservare lo storico.</p></div>
+            <div><strong>Elimina tutto lo storico</strong><p>Elimina consumi e acquisti, anche dall'account online. Questa azione non si può annullare.</p></div>
             <button type="button" class="danger-button" id="clear-data">Elimina</button>
           </div>
         </div>
@@ -240,6 +306,36 @@
     <span id="toast-icon" class="toast-icon" aria-hidden="true">✓</span>
     <span id="toast-message"></span>
   </div>
+
+  <dialog id="purchase-dialog" class="purchase-modal" aria-labelledby="purchase-dialog-title">
+    <span class="purchase-modal-symbol" aria-hidden="true">€</span>
+    <p class="eyebrow">NUOVO ACQUISTO</p>
+    <h2 id="purchase-dialog-title"></h2>
+    <p class="purchase-modal-copy">Quanto hai speso? L'importo sarà salvato nel tuo storico personale.</p>
+    <form id="purchase-form" class="purchase-form" novalidate>
+      <label for="purchase-amount">Importo pagato</label>
+      <div class="amount-input-wrap"><span aria-hidden="true">€</span><input id="purchase-amount" type="number" inputmode="decimal" min="0.01" max="99999999.99" step="0.01" placeholder="0,00" required></div>
+      <p id="purchase-form-error" class="purchase-form-error" role="alert" hidden></p>
+      <div class="purchase-modal-actions">
+        <button type="button" class="secondary-button" id="purchase-cancel">Annulla</button>
+        <button type="submit" class="primary-button" id="purchase-save">Salva acquisto</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="category-details-dialog" class="category-details-modal" aria-labelledby="category-details-title" aria-describedby="category-details-description">
+    <div class="category-details-content">
+      <header class="category-details-header">
+        <div>
+          <p class="eyebrow">DETTAGLI DEL PERIODO</p>
+          <h2 id="category-details-title"></h2>
+          <p id="category-details-description" class="category-details-description"></p>
+        </div>
+        <button type="button" class="icon-button" id="close-category-details" aria-label="Chiudi dettagli">×</button>
+      </header>
+      <div id="category-details-list" class="category-details-list" aria-live="polite"></div>
+    </div>
+  </dialog>
 
   <dialog id="action-dialog" class="action-modal" aria-labelledby="action-dialog-title" aria-describedby="action-dialog-message">
     <div class="action-modal-icon" id="action-dialog-icon" aria-hidden="true">!</div>

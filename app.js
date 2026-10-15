@@ -1,8 +1,9 @@
 'use strict';
 
 const DB_NAME = 'smokelog-local-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'events';
+const PURCHASE_STORE_NAME = 'purchases';
 const MAX_RECENT_EVENTS = 10;
 const CLOUD_BATCH_SIZE = 500;
 const CLOUD_SESSION_KEY = 'smokelog-supabase-session';
@@ -14,11 +15,24 @@ const EVENT_LABELS = {
   puzzetta: 'Puzzetta',
   puff: 'Cartuccia Puff'
 };
+const EVENT_CATEGORY_LABELS = {
+  ...EVENT_LABELS,
+  cigarette: 'Sigarette'
+};
+const PURCHASE_LABELS = {
+  'cigarette-pack': 'Pacchetto di Siga',
+  weed: 'Fumo/Weed',
+  'terea-pack': 'Pacchetto Terea',
+  'puff-cartridge': 'Cartuccia Puff',
+  'tobacco-pack': 'Pacchetto di Tabacco'
+};
 
 let database;
 let databaseOpening;
 let events = [];
+let purchases = [];
 let activeRange = 'day';
+let activeCategoryDetails = null;
 let toastTimer;
 let cloudSession = null;
 let isAuthenticated = false;
@@ -53,6 +67,13 @@ const elements = {
   periodHalfCigarettes: document.getElementById('period-half-cigarettes'),
   periodPuzzetta: document.getElementById('period-puzzetta'),
   periodPuff: document.getElementById('period-puff'),
+  todayExpenseTotal: document.getElementById('today-expense-total'),
+  todayExpenseCount: document.getElementById('today-expense-count'),
+  periodExpenseTotal: document.getElementById('period-expense-total'),
+  expenseCategoryGrid: document.getElementById('expense-category-grid'),
+  expenseBars: document.getElementById('expense-bars'),
+  expenseView: document.getElementById('expense-view'),
+  consumptionView: document.getElementById('consumption-view'),
   chartTitle: document.getElementById('chart-title'),
   chartSubtitle: document.getElementById('chart-subtitle'),
   chartTotalPill: document.getElementById('chart-total-pill'),
@@ -60,6 +81,21 @@ const elements = {
   historyList: document.getElementById('history-list'),
   historyCount: document.getElementById('history-count'),
   historyFootnote: document.getElementById('history-footnote'),
+  purchaseHistoryList: document.getElementById('purchase-history-list'),
+  purchaseHistoryCount: document.getElementById('purchase-history-count'),
+  purchaseHistoryFootnote: document.getElementById('purchase-history-footnote'),
+  categoryDetailsDialog: document.getElementById('category-details-dialog'),
+  categoryDetailsTitle: document.getElementById('category-details-title'),
+  categoryDetailsDescription: document.getElementById('category-details-description'),
+  categoryDetailsList: document.getElementById('category-details-list'),
+  closeCategoryDetails: document.getElementById('close-category-details'),
+  purchaseDialog: document.getElementById('purchase-dialog'),
+  purchaseDialogTitle: document.getElementById('purchase-dialog-title'),
+  purchaseForm: document.getElementById('purchase-form'),
+  purchaseAmount: document.getElementById('purchase-amount'),
+  purchaseFormError: document.getElementById('purchase-form-error'),
+  purchaseCancel: document.getElementById('purchase-cancel'),
+  purchaseSave: document.getElementById('purchase-save'),
   toast: document.getElementById('toast'),
   toastIcon: document.getElementById('toast-icon'),
   toastMessage: document.getElementById('toast-message'),
@@ -181,6 +217,9 @@ function updateAccountControls() {
   document.getElementById('add-half-cigarette').disabled = !signedIn;
   document.getElementById('add-puzzetta').disabled = !signedIn;
   document.getElementById('add-puff').disabled = !signedIn;
+  document.querySelectorAll('[data-purchase-type]').forEach(button => {
+    button.disabled = !signedIn;
+  });
 }
 
 function openAuthenticationModal() {
@@ -333,6 +372,11 @@ async function supabaseRequest(path, options = {}, retry = true) {
     }
   }
   if (!response.ok) {
+    const schemaErrorCodes = new Set(['PGRST202', 'PGRST205', '42P01', '42883']);
+    if ((path.includes('smokelog_purchases') || path.includes('replace_smokelog_data'))
+      && result && schemaErrorCodes.has(result.code)) {
+      throw new Error('Lo schema Supabase per gli acquisti non è aggiornato. Esegui il file supabase-schema.sql nel SQL Editor del progetto, poi riprova.');
+    }
     throw new Error((result && (result.message || result.details || result.hint)) || `Operazione cloud non riuscita (HTTP ${response.status}).`);
   }
   return result;
@@ -355,6 +399,23 @@ async function uploadCloudEvents(source) {
   }
 }
 
+async function uploadCloudPurchases(source) {
+  for (let start = 0; start < source.length; start += CLOUD_BATCH_SIZE) {
+    const rows = source.slice(start, start + CLOUD_BATCH_SIZE).map(purchase => ({
+      id: purchase.id,
+      user_id: cloudSession.user.id,
+      type: purchase.type,
+      amount: purchase.amountCents / 100,
+      timestamp: purchase.timestamp
+    }));
+    await supabaseRequest('smokelog_purchases?on_conflict=id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(rows)
+    });
+  }
+}
+
 async function fetchCloudEvents() {
   const eventsFromCloud = [];
   // Legge tutte le pagine: una singola risposta potrebbe non contenere l'intero storico.
@@ -369,6 +430,26 @@ async function fetchCloudEvents() {
     if (rows.length < CLOUD_BATCH_SIZE) break;
   }
   return eventsFromCloud;
+}
+
+async function fetchCloudPurchases() {
+  const purchasesFromCloud = [];
+  for (let start = 0; ; start += CLOUD_BATCH_SIZE) {
+    const rows = await supabaseRequest('smokelog_purchases?select=id,type,amount,timestamp&order=timestamp.asc', {
+      headers: {
+        Range: `${start}-${start + CLOUD_BATCH_SIZE - 1}`,
+        'Range-Unit': 'items'
+      }
+    });
+    purchasesFromCloud.push(...rows.map(row => ({
+      id: row.id,
+      type: row.type,
+      amountCents: Math.round(Number(row.amount) * 100),
+      timestamp: row.timestamp
+    })));
+    if (rows.length < CLOUD_BATCH_SIZE) break;
+  }
+  return purchasesFromCloud;
 }
 
 function syncCloudEvents() {
@@ -395,15 +476,20 @@ async function performCloudSync() {
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.id)) return event;
     return { ...event, id: makeId() };
   });
+  const localPurchases = (await readAllPurchases()).map(purchase => {
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(purchase.id)) return purchase;
+    return { ...purchase, id: makeId() };
+  });
   ensureSessionActive();
   const remoteEvents = await fetchCloudEvents();
+  const remotePurchases = await fetchCloudPurchases();
   ensureSessionActive();
   const previousUserId = localStorage.getItem(LAST_SYNC_USER_KEY);
-  if (previousUserId && previousUserId !== userId && localEvents.length > 0) {
+  if (previousUserId && previousUserId !== userId && (localEvents.length > 0 || localPurchases.length > 0)) {
     // Evita di associare per errore allo stesso account dati locali appartenenti a un altro utente.
     const approved = await openActionDialog({
       title: 'Cambiare account?',
-      message: 'Questo dispositivo contiene uno storico sincronizzato con un altro account. Accedendo, lo storico locale verrà sostituito con quello del nuovo account. Esporta prima un backup JSON se vuoi conservarlo.',
+      message: 'Questo dispositivo contiene dati sincronizzati con un altro account. Accedendo, consumi e spese locali verranno sostituiti con quelli del nuovo account. Esporta prima un backup JSON se vuoi conservarli.',
       confirmLabel: 'Cambia account',
       danger: true
     });
@@ -414,6 +500,7 @@ async function performCloudSync() {
   }
 
   let nextEvents = remoteEvents;
+  let nextPurchases = remotePurchases;
   if (!previousUserId && localEvents.length > 0) {
     const byId = new Map(remoteEvents.map(event => [event.id, event]));
     for (const event of localEvents) byId.set(event.id, event);
@@ -421,9 +508,18 @@ async function performCloudSync() {
     await uploadCloudEvents(localEvents);
     ensureSessionActive();
   }
+  if (!previousUserId && localPurchases.length > 0) {
+    const byId = new Map(remotePurchases.map(purchase => [purchase.id, purchase]));
+    for (const purchase of localPurchases) byId.set(purchase.id, purchase);
+    nextPurchases = [...byId.values()];
+    await uploadCloudPurchases(localPurchases);
+    ensureSessionActive();
+  }
   await replaceAllEvents(nextEvents);
+  await replaceAllPurchases(nextPurchases);
   ensureSessionActive();
   events = [...nextEvents].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  purchases = [...nextPurchases].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   render();
   localStorage.setItem(LAST_SYNC_USER_KEY, userId);
   isAuthenticated = true;
@@ -575,7 +671,9 @@ async function handleSignOut() {
     await supabaseAuthRequest('logout', {}, cloudSession.access_token);
     clearCloudSession();
     await clearAllEvents();
+    await clearAllPurchases();
     events = [];
+    purchases = [];
     render();
     setAccountStatus('Disconnesso. Lo storico remoto è conservato nel tuo account.');
   } catch (error) {
@@ -740,8 +838,9 @@ function setupAuthenticationEvents() {
         // Un logout in un'altra scheda deve rimuovere anche la copia locale protetta dal gate.
         cloudSession = null;
         isAuthenticated = false;
-        Promise.resolve(cloudSyncPromise).catch(() => {}).then(() => clearAllEvents()).then(() => {
+        Promise.resolve(cloudSyncPromise).catch(() => {}).then(() => Promise.all([clearAllEvents(), clearAllPurchases()])).then(() => {
           events = [];
+          purchases = [];
           render();
           updateAccountControls();
           setAccountStatus('Sessione terminata in un’altra scheda. Accedi di nuovo per continuare.');
@@ -778,6 +877,10 @@ function openDatabase() {
         const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
         store.createIndex('timestamp', 'timestamp', { unique: false });
       }
+      if (!db.objectStoreNames.contains(PURCHASE_STORE_NAME)) {
+        const store = db.createObjectStore(PURCHASE_STORE_NAME, { keyPath: 'id' });
+        store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
     };
     request.onsuccess = () => {
       const openedDatabase = request.result;
@@ -801,12 +904,12 @@ function openDatabase() {
   return databaseOpening;
 }
 
-async function createDatabaseTransaction(mode) {
+async function createDatabaseTransaction(mode, storeName = STORE_NAME) {
   // Alcuni browser chiudono la connessione inattiva: riaprila e riprova una sola volta.
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const currentDatabase = await openDatabase();
     try {
-      return currentDatabase.transaction(STORE_NAME, mode);
+      return currentDatabase.transaction(storeName, mode);
     } catch (error) {
       if (error.name !== 'InvalidStateError' || attempt > 0) throw error;
       if (database === currentDatabase) database = null;
@@ -858,6 +961,44 @@ async function replaceAllEvents(importedEvents) {
 async function clearAllEvents() {
   const tx = await createDatabaseTransaction('readwrite');
   tx.objectStore(STORE_NAME).clear();
+  await transactionDone(tx);
+}
+
+async function readAllPurchases() {
+  const tx = await createDatabaseTransaction('readonly', PURCHASE_STORE_NAME);
+  const done = transactionDone(tx);
+  const request = tx.objectStore(PURCHASE_STORE_NAME).getAll();
+  const result = await new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error || new Error('Impossibile leggere lo storico degli acquisti.'));
+  });
+  await done;
+  return result.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+}
+
+async function persistPurchase(purchase) {
+  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
+  tx.objectStore(PURCHASE_STORE_NAME).add(purchase);
+  await transactionDone(tx);
+}
+
+async function removePurchase(id) {
+  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
+  tx.objectStore(PURCHASE_STORE_NAME).delete(id);
+  await transactionDone(tx);
+}
+
+async function replaceAllPurchases(importedPurchases) {
+  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
+  const store = tx.objectStore(PURCHASE_STORE_NAME);
+  store.clear();
+  for (const purchase of importedPurchases) store.put(purchase);
+  await transactionDone(tx);
+}
+
+async function clearAllPurchases() {
+  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
+  tx.objectStore(PURCHASE_STORE_NAME).clear();
   await transactionDone(tx);
 }
 
@@ -936,6 +1077,10 @@ function eventLabel(type) {
 
 function formatNumber(number) {
   return new Intl.NumberFormat('it-IT').format(number);
+}
+
+function formatCurrency(amountCents) {
+  return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(amountCents / 100);
 }
 
 function capitalizeFirst(value) {
@@ -1111,9 +1256,16 @@ function render() {
   elements.todayHalfCigarettes.textContent = formatNumber(todayCounts.halfCigarettes);
   elements.todayPuzzetta.textContent = formatNumber(todayCounts.puzzetta);
   elements.todayPuff.textContent = formatNumber(todayCounts.puff);
+  const todayPurchases = purchases.filter(purchase => withinRange(purchase, startOfRange('day', now), endOfRange('day', now)));
+  const todaySpendCents = todayPurchases.reduce((total, purchase) => total + purchase.amountCents, 0);
+  elements.todayExpenseTotal.textContent = formatCurrency(todaySpendCents);
+  elements.todayExpenseCount.textContent = todayPurchases.length === 0
+    ? 'Nessun acquisto registrato'
+    : `${formatNumber(todayPurchases.length)} ${todayPurchases.length === 1 ? 'acquisto' : 'acquisti'} registrati`;
 
   const labels = { day: 'Totale di oggi', week: 'Totale ultimi 7 giorni', month: 'Totale del mese', year: 'Totale dell’anno' };
   const periodEvents = filterForRange(activeRange, now);
+  const periodPurchases = purchases.filter(purchase => withinRange(purchase, startOfRange(activeRange, now), endOfRange(activeRange, now)));
   const counts = countTypes(periodEvents);
   elements.periodLabel.textContent = labels[activeRange];
   elements.periodTotal.textContent = formatNumber(counts.total);
@@ -1122,8 +1274,204 @@ function render() {
   elements.periodHalfCigarettes.textContent = formatNumber(counts.halfCigarettes);
   elements.periodPuzzetta.textContent = formatNumber(counts.puzzetta);
   elements.periodPuff.textContent = formatNumber(counts.puff);
+  renderExpenseSummary(periodPurchases);
   renderChart(activeRange, periodEvents, now);
   renderHistory();
+  renderPurchaseHistory();
+  if (activeCategoryDetails && elements.categoryDetailsDialog.open) renderCategoryDetails();
+}
+
+function setStatsView(view) {
+  if (view !== 'expenses' && view !== 'consumption') return;
+  elements.expenseView.hidden = view !== 'expenses';
+  elements.consumptionView.hidden = view !== 'consumption';
+  document.querySelectorAll('[data-stats-view]').forEach(button => {
+    const selected = button.dataset.statsView === view;
+    button.classList.toggle('is-active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+}
+
+function renderExpenseSummary(periodPurchases) {
+  const totals = Object.fromEntries(Object.keys(PURCHASE_LABELS).map(type => [type, 0]));
+  for (const purchase of periodPurchases) {
+    if (Object.hasOwn(totals, purchase.type)) totals[purchase.type] += purchase.amountCents;
+  }
+  const totalCents = periodPurchases.reduce((total, purchase) => total + purchase.amountCents, 0);
+  elements.periodExpenseTotal.textContent = formatCurrency(totalCents);
+  elements.expenseCategoryGrid.replaceChildren();
+  for (const [type, label] of Object.entries(PURCHASE_LABELS)) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = `expense-category-card expense-${type}`;
+    card.dataset.purchaseType = type;
+    card.setAttribute('aria-label', `Mostra acquisti: ${label}, totale ${formatCurrency(totals[type])}`);
+    const name = document.createElement('span');
+    name.textContent = label;
+    const amount = document.createElement('strong');
+    amount.textContent = formatCurrency(totals[type]);
+    card.append(name, amount);
+    elements.expenseCategoryGrid.append(card);
+  }
+
+  elements.expenseBars.replaceChildren();
+  const maxCents = Math.max(0, ...Object.values(totals));
+  for (const [type, label] of Object.entries(PURCHASE_LABELS)) {
+    const row = document.createElement('div');
+    row.className = `expense-bar-row expense-${type}`;
+    const name = document.createElement('span');
+    name.className = 'expense-bar-label';
+    name.textContent = label;
+    const track = document.createElement('div');
+    track.className = 'expense-bar-track';
+    track.setAttribute('aria-label', `${label}: ${formatCurrency(totals[type])}`);
+    const fill = document.createElement('div');
+    fill.className = 'expense-bar-fill';
+    fill.style.width = `${maxCents === 0 || totals[type] === 0 ? 0 : Math.max(4, (totals[type] / maxCents) * 100)}%`;
+    track.append(fill);
+    const amount = document.createElement('strong');
+    amount.className = 'expense-bar-value';
+    amount.textContent = formatCurrency(totals[type]);
+    row.append(name, track, amount);
+    elements.expenseBars.append(row);
+  }
+  if (periodPurchases.length === 0) {
+    const note = document.createElement('p');
+    note.className = 'chart-empty-note';
+    note.textContent = 'Nessuna spesa in questo periodo. Registra un acquisto per vedere il riepilogo.';
+    elements.expenseBars.append(note);
+  }
+}
+
+function openCategoryDetails(kind, type) {
+  const labels = kind === 'event' ? EVENT_CATEGORY_LABELS : PURCHASE_LABELS;
+  if (!Object.hasOwn(labels, type)) return;
+  activeCategoryDetails = { kind, type };
+  renderCategoryDetails();
+  elements.categoryDetailsDialog.showModal();
+}
+
+function renderCategoryDetails() {
+  if (!activeCategoryDetails) return;
+  const { kind, type } = activeCategoryDetails;
+  const labels = kind === 'event' ? EVENT_CATEGORY_LABELS : PURCHASE_LABELS;
+  const rangeLabels = { day: 'oggi', week: 'negli ultimi 7 giorni', month: 'nel mese', year: 'nell’anno' };
+  const now = new Date();
+  const rangeStart = startOfRange(activeRange, now);
+  const rangeEnd = endOfRange(activeRange, now);
+  const records = (kind === 'event' ? events : purchases)
+    .filter(record => record.type === type && withinRange(record, rangeStart, rangeEnd))
+    .sort((first, second) => new Date(second.timestamp) - new Date(first.timestamp));
+
+  elements.categoryDetailsTitle.textContent = labels[type];
+  elements.categoryDetailsDescription.textContent = `${formatNumber(records.length)} ${kind === 'event' ? (records.length === 1 ? 'registrazione' : 'registrazioni') : (records.length === 1 ? 'acquisto' : 'acquisti')} ${rangeLabels[activeRange]}.`;
+  elements.categoryDetailsList.replaceChildren();
+  if (records.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'category-details-empty';
+    empty.textContent = `Nessun elemento di questa categoria ${rangeLabels[activeRange]}.`;
+    elements.categoryDetailsList.append(empty);
+    return;
+  }
+
+  for (const record of records) {
+    const row = document.createElement('div');
+    row.className = 'category-details-item';
+    const details = document.createElement('div');
+    details.className = 'category-details-item-main';
+    const date = document.createElement('p');
+    date.className = 'history-item-date';
+    date.textContent = formatDateTime(record.timestamp);
+    details.append(date);
+    if (kind === 'purchase') {
+      const amount = document.createElement('strong');
+      amount.className = 'purchase-history-amount';
+      amount.textContent = formatCurrency(record.amountCents);
+      details.append(amount);
+    }
+    const remove = document.createElement('button');
+    remove.className = 'delete-event';
+    remove.type = 'button';
+    remove.textContent = '−';
+    const itemDescription = kind === 'event'
+      ? `${labels[type]}, ${formatDateTime(record.timestamp)}`
+      : `${labels[type]}, ${formatCurrency(record.amountCents)}, ${formatDateTime(record.timestamp)}`;
+    remove.setAttribute('aria-label', `Elimina ${kind === 'event' ? 'registrazione' : 'acquisto'}: ${itemDescription}`);
+    remove.addEventListener('click', () => {
+      if (kind === 'event') void handleDeleteEvent(record);
+      else void handleDeletePurchase(record);
+    });
+    row.append(details, remove);
+    elements.categoryDetailsList.append(row);
+  }
+}
+
+function suspendCategoryDetails() {
+  if (!elements.categoryDetailsDialog.open || !activeCategoryDetails) return null;
+  const details = activeCategoryDetails;
+  elements.categoryDetailsDialog.close();
+  return details;
+}
+
+function resumeCategoryDetails(details) {
+  if (!details || elements.categoryDetailsDialog.open) return;
+  activeCategoryDetails = details;
+  renderCategoryDetails();
+  elements.categoryDetailsDialog.showModal();
+}
+
+function renderPurchaseHistory() {
+  const sorted = [...purchases].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const visible = sorted.slice(0, MAX_RECENT_EVENTS);
+  elements.purchaseHistoryList.replaceChildren();
+  elements.purchaseHistoryCount.textContent = `${formatNumber(purchases.length)} ${purchases.length === 1 ? 'acquisto' : 'acquisti'}`;
+  elements.purchaseHistoryFootnote.textContent = purchases.length > MAX_RECENT_EVENTS
+    ? `Mostrati gli ${MAX_RECENT_EVENTS} acquisti più recenti su ${formatNumber(purchases.length)}.`
+    : 'Puoi rimuovere un acquisto dallo storico.';
+  if (visible.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    const icon = document.createElement('span');
+    icon.className = 'empty-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '€';
+    const title = document.createElement('strong');
+    title.textContent = 'Ancora nessun acquisto';
+    const description = document.createElement('p');
+    description.textContent = 'Gli acquisti e gli importi che inserirai compariranno qui.';
+    empty.append(icon, title, description);
+    elements.purchaseHistoryList.append(empty);
+    return;
+  }
+  for (const purchase of visible) {
+    const label = PURCHASE_LABELS[purchase.type] || 'Acquisto';
+    const row = document.createElement('div');
+    row.className = `history-item purchase-history-item expense-${purchase.type}`;
+    const icon = document.createElement('span');
+    icon.className = 'history-type-icon purchase-history-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '€';
+    const main = document.createElement('div');
+    main.className = 'history-item-main';
+    const title = document.createElement('p');
+    title.className = 'history-item-title';
+    title.textContent = label;
+    const date = document.createElement('p');
+    date.className = 'history-item-date';
+    date.textContent = formatDateTime(purchase.timestamp);
+    main.append(title, date);
+    const amount = document.createElement('strong');
+    amount.className = 'purchase-history-amount';
+    amount.textContent = formatCurrency(purchase.amountCents);
+    const remove = document.createElement('button');
+    remove.className = 'delete-event';
+    remove.type = 'button';
+    remove.textContent = '−';
+    remove.setAttribute('aria-label', `Elimina acquisto: ${label}, ${formatCurrency(purchase.amountCents)}`);
+    remove.addEventListener('click', () => void handleDeletePurchase(purchase));
+    row.append(icon, main, amount, remove);
+    elements.purchaseHistoryList.append(row);
+  }
 }
 
 function showToast(message, type = 'success') {
@@ -1189,19 +1537,100 @@ async function handleAddEvent(type) {
   }
 }
 
+function openPurchaseDialog(type) {
+  const label = PURCHASE_LABELS[type];
+  if (!label) throw new Error(`Categoria di acquisto non riconosciuta: ${type}`);
+  elements.purchaseDialogTitle.textContent = label;
+  elements.purchaseAmount.value = '';
+  elements.purchaseAmount.setCustomValidity('');
+  elements.purchaseFormError.hidden = true;
+  elements.purchaseDialog.returnValue = '';
+  elements.purchaseDialog.showModal();
+  window.requestAnimationFrame(() => elements.purchaseAmount.focus());
+  return new Promise(resolve => {
+    elements.purchaseDialog.addEventListener('close', () => {
+      const amountCents = Number(elements.purchaseDialog.returnValue);
+      resolve(Number.isSafeInteger(amountCents) && amountCents > 0 ? amountCents : null);
+    }, { once: true });
+  });
+}
+
+async function handleAddPurchase(type) {
+  if (!isAuthenticated) {
+    openAuthenticationModal();
+    return;
+  }
+  let uploaded = false;
+  try {
+    const amountCents = await openPurchaseDialog(type);
+    if (amountCents === null) return;
+    const purchase = { id: makeId(), type, amountCents, timestamp: new Date().toISOString() };
+    if (cloudConfigured) {
+      await uploadCloudPurchases([purchase]);
+      uploaded = true;
+    }
+    await persistPurchase(purchase);
+    purchases.push(purchase);
+    purchases.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    render();
+    showToast(`${PURCHASE_LABELS[type]} registrato: ${formatCurrency(amountCents)}.`);
+  } catch (error) {
+    console.error(error);
+    if (uploaded) {
+      showToast('Acquisto salvato online; aggiornamento locale non riuscito.', 'error');
+      return;
+    }
+    const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
+    showToast(`Acquisto non salvato: verifica la connessione e riprova.${detail}`, 'error');
+  }
+}
+
+async function handleDeletePurchase(purchase) {
+  const label = PURCHASE_LABELS[purchase.type] || 'Acquisto';
+  const categoryDetails = suspendCategoryDetails();
+  const approved = await openActionDialog({
+    title: 'Eliminare questo acquisto?',
+    message: `${label} · ${formatCurrency(purchase.amountCents)} · ${formatDateTime(purchase.timestamp)}. La spesa verrà rimossa dallo storico sincronizzato.`,
+    confirmLabel: 'Sì, elimina',
+    danger: true
+  });
+  if (!approved) {
+    resumeCategoryDetails(categoryDetails);
+    return;
+  }
+  try {
+    if (cloudConfigured) {
+      await supabaseRequest(`smokelog_purchases?id=eq.${encodeURIComponent(purchase.id)}`, { method: 'DELETE' });
+    }
+    await removePurchase(purchase.id);
+    purchases = purchases.filter(item => item.id !== purchase.id);
+    render();
+    resumeCategoryDetails(categoryDetails);
+    showToast('Acquisto eliminato.');
+  } catch (error) {
+    console.error(error);
+    resumeCategoryDetails(categoryDetails);
+    showToast('Non è stato possibile eliminare l’acquisto.', 'error');
+  }
+}
+
 async function handleDeleteEvent(event) {
   if (!isAuthenticated) {
     openAuthenticationModal();
     return;
   }
   const typeLabel = eventLabel(event.type);
+  const categoryDetails = suspendCategoryDetails();
   const approved = await openActionDialog({
     title: 'Sicuro che non l’hai fumata?',
     message: `${typeLabel} · ${formatDateTime(event.timestamp)}. La registrazione verrà rimossa dallo storico sincronizzato.`,
     confirmLabel: 'Sì, elimina',
     danger: true
   });
-  if (!approved) return;
+  if (!approved) {
+    resumeCategoryDetails(categoryDetails);
+    return;
+  }
   try {
     if (cloudConfigured) {
       await supabaseRequest(`smokelog_events?id=eq.${encodeURIComponent(event.id)}`, { method: 'DELETE' });
@@ -1209,9 +1638,11 @@ async function handleDeleteEvent(event) {
     await removeEvent(event.id);
     events = events.filter(item => item.id !== event.id);
     render();
+    resumeCategoryDetails(categoryDetails);
     showToast('Registrazione eliminata.');
   } catch (error) {
     console.error(error);
+    resumeCategoryDetails(categoryDetails);
     showToast('Non è stato possibile eliminare la registrazione.', 'error');
   }
 }
@@ -1236,9 +1667,10 @@ function exportJson() {
   }
   const backup = {
     app: 'SmokeLog',
-    schemaVersion: 1,
+    schemaVersion: 2,
     exportedAt: new Date().toISOString(),
-    events: [...events].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    events: [...events].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)),
+    purchases: [...purchases].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
   };
   downloadFile(`smokelog-backup-${localDateKey(new Date())}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8');
   showToast('Backup JSON preparato. Salvalo in un luogo sicuro.');
@@ -1254,14 +1686,27 @@ function exportCsv() {
     openAuthenticationModal();
     return;
   }
-  const rows = [['id', 'tipo', 'data_ora_iso', 'data_locale', 'ora_locale']];
+  const rows = [['id', 'tipo', 'importo_eur', 'data_ora_iso', 'data_locale', 'ora_locale']];
   const sorted = [...events].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   for (const event of sorted) {
     const date = new Date(event.timestamp);
     rows.push([
       event.id,
       eventLabel(event.type),
+      '',
       event.timestamp,
+      date.toLocaleDateString('it-IT'),
+      date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+    ]);
+  }
+  const sortedPurchases = [...purchases].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  for (const purchase of sortedPurchases) {
+    const date = new Date(purchase.timestamp);
+    rows.push([
+      purchase.id,
+      PURCHASE_LABELS[purchase.type],
+      (purchase.amountCents / 100).toFixed(2),
+      purchase.timestamp,
       date.toLocaleDateString('it-IT'),
       date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
     ]);
@@ -1272,7 +1717,8 @@ function exportCsv() {
 }
 
 function validateBackup(parsed) {
-  if (!parsed || parsed.app !== 'SmokeLog' || parsed.schemaVersion !== 1 || !Array.isArray(parsed.events)) {
+  if (!parsed || parsed.app !== 'SmokeLog' || ![1, 2].includes(parsed.schemaVersion) || !Array.isArray(parsed.events)
+    || (parsed.schemaVersion === 2 && !Array.isArray(parsed.purchases))) {
     throw new Error('Il file non sembra un backup SmokeLog valido.');
   }
   const seen = new Set();
@@ -1288,7 +1734,22 @@ function validateBackup(parsed) {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : makeId();
     validated.push({ id: uuid, type: item.type, timestamp: new Date(item.timestamp).toISOString() });
   }
-  return validated;
+  const seenPurchaseIds = new Set();
+  const validatedPurchases = [];
+  for (const item of parsed.purchases || []) {
+    const amount = Number(item && item.amountCents);
+    if (!item || typeof item.id !== 'string' || !Object.hasOwn(PURCHASE_LABELS, item.type)
+      || !Number.isSafeInteger(amount) || amount < 1 || amount > 9999999999
+      || typeof item.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp))) {
+      throw new Error('Il backup contiene un acquisto non valido. Nessun dato è stato modificato.');
+    }
+    let id = item.id;
+    if (seenPurchaseIds.has(id)) id = makeId();
+    seenPurchaseIds.add(id);
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : makeId();
+    validatedPurchases.push({ id: uuid, type: item.type, amountCents: amount, timestamp: new Date(item.timestamp).toISOString() });
+  }
+  return { events: validated, purchases: validatedPurchases };
 }
 
 async function importJsonFile(file) {
@@ -1304,21 +1765,28 @@ async function importJsonFile(file) {
     // L'importazione sostituisce lo storico locale e cloud, non lo unisce.
     const approved = await openActionDialog({
       title: 'Sostituire lo storico?',
-      message: `Il backup contiene ${validated.length} registrazioni e sostituirà tutti i dati attuali, anche quelli sincronizzati. Esporta prima un backup se vuoi conservarli.`,
+      message: `Il backup contiene ${validated.events.length} registrazioni e ${validated.purchases.length} acquisti. Sostituirà consumi e spese attuali, anche quelli sincronizzati. Esporta prima un backup se vuoi conservarli.`,
       confirmLabel: 'Importa backup',
       danger: true
     });
     if (!approved) return;
     if (cloudConfigured) {
-      await supabaseRequest('rpc/replace_smokelog_events', {
+      await supabaseRequest('rpc/replace_smokelog_data', {
         method: 'POST',
-        body: JSON.stringify({ p_events: validated })
+        body: JSON.stringify({ p_events: validated.events, p_purchases: validated.purchases.map(purchase => ({
+          id: purchase.id,
+          type: purchase.type,
+          amount: purchase.amountCents / 100,
+          timestamp: purchase.timestamp
+        })) })
       });
     }
-    await replaceAllEvents(validated);
+    await replaceAllEvents(validated.events);
+    await replaceAllPurchases(validated.purchases);
     events = await readAllEvents();
+    purchases = await readAllPurchases();
     render();
-    showToast(`Importate ${validated.length} registrazioni.`);
+    showToast(`Importati ${validated.events.length} consumi e ${validated.purchases.length} acquisti.`);
   } catch (error) {
     console.error(error);
     await openActionDialog({
@@ -1342,17 +1810,22 @@ async function handleClearData() {
   }
   const approved = await openActionDialog({
     title: 'Eliminare tutto lo storico?',
-    message: `Stai per eliminare tutte le ${events.length} registrazioni dall’account e da questo dispositivo. L’operazione non si può annullare. Esporta prima un backup se vuoi conservarle.`,
+    message: `Stai per eliminare ${events.length} registrazioni e ${purchases.length} acquisti dall’account e da questo dispositivo. L’operazione non si può annullare. Esporta prima un backup se vuoi conservarli.`,
     confirmLabel: 'Sì, elimina tutto',
     danger: true
   });
   if (!approved) return;
   try {
     if (cloudConfigured) {
-      await supabaseRequest(`smokelog_events?user_id=eq.${encodeURIComponent(cloudSession.user.id)}`, { method: 'DELETE' });
+      await supabaseRequest('rpc/replace_smokelog_data', {
+        method: 'POST',
+        body: JSON.stringify({ p_events: [], p_purchases: [] })
+      });
     }
     await clearAllEvents();
+    await clearAllPurchases();
     events = [];
+    purchases = [];
     render();
     showToast('Storico eliminato.');
   } catch (error) {
@@ -1403,6 +1876,44 @@ function setupEventHandlers() {
   document.getElementById('add-half-cigarette').addEventListener('click', () => handleAddEvent('half-cigarette'));
   document.getElementById('add-puzzetta').addEventListener('click', () => handleAddEvent('puzzetta'));
   document.getElementById('add-puff').addEventListener('click', () => handleAddEvent('puff'));
+  document.querySelectorAll('[data-purchase-type]').forEach(button => {
+    button.addEventListener('click', () => void handleAddPurchase(button.dataset.purchaseType));
+  });
+  document.querySelectorAll('[data-event-type]').forEach(button => {
+    button.addEventListener('click', () => openCategoryDetails('event', button.dataset.eventType));
+  });
+  elements.expenseCategoryGrid.addEventListener('click', event => {
+    const card = event.target.closest('[data-purchase-type]');
+    if (card && elements.expenseCategoryGrid.contains(card)) {
+      openCategoryDetails('purchase', card.dataset.purchaseType);
+    }
+  });
+  elements.closeCategoryDetails.addEventListener('click', () => elements.categoryDetailsDialog.close());
+  elements.categoryDetailsDialog.addEventListener('close', () => {
+    activeCategoryDetails = null;
+  });
+  elements.categoryDetailsDialog.addEventListener('click', event => {
+    if (event.target === elements.categoryDetailsDialog) elements.categoryDetailsDialog.close();
+  });
+  elements.purchaseForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const amount = elements.purchaseAmount.valueAsNumber;
+    const amountCents = Math.round(amount * 100);
+    if (!Number.isFinite(amount) || !elements.purchaseAmount.checkValidity()
+      || !Number.isSafeInteger(amountCents) || amountCents < 1 || amountCents > 9999999999) {
+      elements.purchaseFormError.textContent = 'Inserisci un importo valido, maggiore di zero e con al massimo due decimali.';
+      elements.purchaseFormError.hidden = false;
+      elements.purchaseAmount.reportValidity();
+      return;
+    }
+    elements.purchaseFormError.hidden = true;
+    elements.purchaseDialog.returnValue = String(amountCents);
+    elements.purchaseDialog.close();
+  });
+  elements.purchaseCancel.addEventListener('click', () => elements.purchaseDialog.close());
+  elements.purchaseDialog.addEventListener('click', event => {
+    if (event.target === elements.purchaseDialog) elements.purchaseDialog.close();
+  });
   document.querySelectorAll('[data-range]').forEach(button => {
     button.addEventListener('click', () => {
       activeRange = button.dataset.range;
@@ -1413,6 +1924,9 @@ function setupEventHandlers() {
       });
       render();
     });
+  });
+  document.querySelectorAll('[data-stats-view]').forEach(button => {
+    button.addEventListener('click', () => setStatsView(button.dataset.statsView));
   });
   document.getElementById('export-json').addEventListener('click', exportJson);
   document.getElementById('export-csv').addEventListener('click', exportCsv);
@@ -1452,7 +1966,11 @@ async function init() {
   try {
     await openDatabase();
     events = await readAllEvents();
-    if (cloudConfigured) events = [];
+    purchases = await readAllPurchases();
+    if (cloudConfigured) {
+      events = [];
+      purchases = [];
+    }
     render();
     await updateStorageStatus();
   } catch (error) {
