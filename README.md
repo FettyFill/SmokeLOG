@@ -4,7 +4,7 @@ Una Progressive Web App (PWA) per registrare separatamente sigarette e Barnei. L
 
 ## Funzionalità
 
-- Registrazione di sigarette, Barnei, Mezza Siga e Puzzetta con data e ora.
+- Registrazione di sigarette, Barnei, Mezza Siga, Puzzetta e Cartuccia Puff con data e ora.
 - Contatori per oggi, ultimi 7 giorni, mese corrente e anno corrente.
 - Grafico riepilogativo per fascia oraria, giorno, settimana del mese o mese dell'anno.
 - Ultime 10 registrazioni, con possibilità di eliminare un evento.
@@ -17,7 +17,7 @@ Una Progressive Web App (PWA) per registrare separatamente sigarette e Barnei. L
 La sincronizzazione non è attiva finché non configuri un progetto Supabase. Non inserire mai la `service_role` key nel sito: il repository è pubblico. Il codice del browser usa solo la chiave pubblica anon/publishable; l'accesso ai dati è limitato dalle policy Row Level Security.
 
 1. Crea un progetto su [Supabase](https://supabase.com/) e copia il suo **Project URL** e la chiave **publishable** (o `anon` legacy) dalle impostazioni API.
-2. In Supabase apri **SQL Editor**, esegui il contenuto aggiornato di [`supabase-schema.sql`](./supabase-schema.sql). Crea la tabella, le policy che isolano i dati per account e la funzione usata per sostituire lo storico durante il ripristino di un backup; aggiorna inoltre i tipi di evento ammessi.
+2. In Supabase apri **SQL Editor**, esegui il contenuto aggiornato di [`supabase-schema.sql`](./supabase-schema.sql). Crea la tabella, le policy che isolano i dati per account e la funzione usata per sostituire lo storico durante il ripristino di un backup; aggiorna inoltre i tipi di evento ammessi. Quando aggiungi una nuova tipologia a SmokeLog, riesegui questo script sul progetto esistente per abilitarne la sincronizzazione.
 3. In **Authentication → URL Configuration**, imposta come **Site URL** l'indirizzo GitHub Pages, ad esempio `https://fettyfill.github.io/SmokeLOG/`, e aggiungi lo stesso indirizzo tra i redirect consentiti. Per provare localmente aggiungi anche l'indirizzo HTTPS o `http://localhost` usato dal server locale.
 4. Inserisci URL e chiave pubblica in [`supabase-config.js`](./supabase-config.js), sostituendo i valori segnaposto.
 5. Pubblica tutti i file, incluso `supabase-config.js` e `supabase-schema.sql`, su GitHub Pages. La chiave publishable/anon è visibile nel browser per definizione: **non** è una password e non va confusa con la `service_role` key.

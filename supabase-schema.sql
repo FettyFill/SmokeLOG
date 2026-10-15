@@ -10,7 +10,7 @@ alter table public.smokelog_events
 
 alter table public.smokelog_events
   add constraint smokelog_events_type_check
-  check (type in ('cigarette', 'joint', 'half-cigarette', 'puzzetta'));
+  check (type in ('cigarette', 'joint', 'half-cigarette', 'puzzetta', 'puff'));
 
 alter table public.smokelog_events enable row level security;
 

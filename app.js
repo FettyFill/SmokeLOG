@@ -11,7 +11,8 @@ const EVENT_LABELS = {
   cigarette: 'Sigaretta',
   joint: 'Barnei',
   'half-cigarette': 'Mezza Siga',
-  puzzetta: 'Puzzetta'
+  puzzetta: 'Puzzetta',
+  puff: 'Cartuccia Puff'
 };
 
 let database;
@@ -44,12 +45,14 @@ const elements = {
   todayJoints: document.getElementById('today-joints'),
   todayHalfCigarettes: document.getElementById('today-half-cigarettes'),
   todayPuzzetta: document.getElementById('today-puzzetta'),
+  todayPuff: document.getElementById('today-puff'),
   periodLabel: document.getElementById('period-label'),
   periodTotal: document.getElementById('period-total'),
   periodCigarettes: document.getElementById('period-cigarettes'),
   periodJoints: document.getElementById('period-joints'),
   periodHalfCigarettes: document.getElementById('period-half-cigarettes'),
   periodPuzzetta: document.getElementById('period-puzzetta'),
+  periodPuff: document.getElementById('period-puff'),
   chartTitle: document.getElementById('chart-title'),
   chartSubtitle: document.getElementById('chart-subtitle'),
   chartTotalPill: document.getElementById('chart-total-pill'),
@@ -177,6 +180,7 @@ function updateAccountControls() {
   document.getElementById('add-joint').disabled = !signedIn;
   document.getElementById('add-half-cigarette').disabled = !signedIn;
   document.getElementById('add-puzzetta').disabled = !signedIn;
+  document.getElementById('add-puff').disabled = !signedIn;
 }
 
 function openAuthenticationModal() {
@@ -908,18 +912,21 @@ function countTypes(source) {
   let joints = 0;
   let halfCigarettes = 0;
   let puzzetta = 0;
+  let puff = 0;
   for (const event of source) {
     if (event.type === 'cigarette') cigarettes += 1;
     if (event.type === 'joint') joints += 1;
     if (event.type === 'half-cigarette') halfCigarettes += 1;
     if (event.type === 'puzzetta') puzzetta += 1;
+    if (event.type === 'puff') puff += 1;
   }
   return {
-    total: cigarettes + joints + halfCigarettes + puzzetta,
+    total: cigarettes + joints + halfCigarettes + puzzetta + puff,
     cigarettes,
     joints,
     halfCigarettes,
-    puzzetta
+    puzzetta,
+    puff
   };
 }
 
@@ -1058,7 +1065,7 @@ function renderHistory() {
     const title = document.createElement('strong');
     title.textContent = 'Ancora nessuna registrazione';
     const description = document.createElement('p');
-    description.textContent = 'Quando aggiungerai una sigaretta o un Barnei, lo troverai qui.';
+    description.textContent = 'Quando aggiungerai una registrazione, la troverai qui.';
     empty.append(icon, title, description);
     elements.historyList.append(empty);
     return;
@@ -1071,7 +1078,7 @@ function renderHistory() {
     const icon = document.createElement('span');
     icon.className = `history-type-icon ${event.type}`;
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = event.type === 'cigarette' || event.type === 'half-cigarette' ? '↗' : '✳';
+    icon.textContent = event.type === 'cigarette' || event.type === 'half-cigarette' ? '↗' : event.type === 'puff' ? '▱' : '✳';
     const main = document.createElement('div');
     main.className = 'history-item-main';
     const title = document.createElement('p');
@@ -1103,6 +1110,7 @@ function render() {
   elements.todayJoints.textContent = formatNumber(todayCounts.joints);
   elements.todayHalfCigarettes.textContent = formatNumber(todayCounts.halfCigarettes);
   elements.todayPuzzetta.textContent = formatNumber(todayCounts.puzzetta);
+  elements.todayPuff.textContent = formatNumber(todayCounts.puff);
 
   const labels = { day: 'Totale di oggi', week: 'Totale ultimi 7 giorni', month: 'Totale del mese', year: 'Totale dell’anno' };
   const periodEvents = filterForRange(activeRange, now);
@@ -1113,6 +1121,7 @@ function render() {
   elements.periodJoints.textContent = formatNumber(counts.joints);
   elements.periodHalfCigarettes.textContent = formatNumber(counts.halfCigarettes);
   elements.periodPuzzetta.textContent = formatNumber(counts.puzzetta);
+  elements.periodPuff.textContent = formatNumber(counts.puff);
   renderChart(activeRange, periodEvents, now);
   renderHistory();
 }
@@ -1167,7 +1176,16 @@ async function handleAddEvent(type) {
     showToast(`${eventLabel(type)} registrat${type === 'joint' ? 'o' : 'a'}.`);
   } catch (error) {
     console.error(error);
-    showToast(uploaded ? 'Salvata online; aggiornamento locale non riuscito.' : 'Non salvata online: verifica la connessione e riprova.', 'error');
+    if (uploaded) {
+      showToast('Salvata online; aggiornamento locale non riuscito.', 'error');
+      return;
+    }
+    if (type === 'puff' && error instanceof Error && /smokelog_events_type_check|check constraint/i.test(error.message)) {
+      showToast('Cartuccia Puff non è ancora abilitata nel database. In Supabase → SQL Editor esegui di nuovo il file supabase-schema.sql aggiornato.', 'error');
+      return;
+    }
+    const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
+    showToast(`Non salvata online: verifica la connessione e riprova.${detail}`, 'error');
   }
 }
 
@@ -1384,6 +1402,7 @@ function setupEventHandlers() {
   document.getElementById('add-joint').addEventListener('click', () => handleAddEvent('joint'));
   document.getElementById('add-half-cigarette').addEventListener('click', () => handleAddEvent('half-cigarette'));
   document.getElementById('add-puzzetta').addEventListener('click', () => handleAddEvent('puzzetta'));
+  document.getElementById('add-puff').addEventListener('click', () => handleAddEvent('puff'));
   document.querySelectorAll('[data-range]').forEach(button => {
     button.addEventListener('click', () => {
       activeRange = button.dataset.range;
