@@ -39,6 +39,7 @@ let activeTimestampEdit = null;
 let toastTimer;
 let cloudSession = null;
 let isAuthenticated = false;
+let hasResolvedInitialSession = false;
 let isPasswordRecovery = false;
 let authMode = 'signin';
 let awaitingEmailConfirmation = false;
@@ -182,7 +183,7 @@ function updateAccountControls() {
   const signingUp = authMode === 'signup';
   elements.appFrame.inert = !signedIn;
   elements.appFrame.classList.toggle('is-locked', !signedIn);
-  elements.authGate.hidden = signedIn;
+  elements.authGate.hidden = signedIn || !hasResolvedInitialSession;
   elements.authGateMessage.textContent = cloudConfigured
     ? 'Accedi o crea un account per usare SmokeLog e sincronizzare il tuo storico.'
     : 'La sincronizzazione non è ancora configurata. Completa i passaggi Supabase indicati nel README.';
@@ -2165,10 +2166,15 @@ async function init() {
     });
   }
 
-  if (cloudConfigured) {
-    await restoreCloudSession();
-  } else {
-    setAccountStatus('Sincronizzazione non configurata. Completa la configurazione Supabase descritta nel README.');
+  try {
+    if (cloudConfigured) {
+      await restoreCloudSession();
+    } else {
+      setAccountStatus('Sincronizzazione non configurata. Completa la configurazione Supabase descritta nel README.');
+    }
+  } finally {
+    hasResolvedInitialSession = true;
+    updateAccountControls();
   }
 
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
