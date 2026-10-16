@@ -33,6 +33,7 @@ let events = [];
 let purchases = [];
 let activeRange = 'day';
 let activeCategoryDetails = null;
+let activeTimestampEdit = null;
 let toastTimer;
 let cloudSession = null;
 let isAuthenticated = false;
@@ -84,6 +85,15 @@ const elements = {
   purchaseHistoryList: document.getElementById('purchase-history-list'),
   purchaseHistoryCount: document.getElementById('purchase-history-count'),
   purchaseHistoryFootnote: document.getElementById('purchase-history-footnote'),
+  timestampDialog: document.getElementById('timestamp-dialog'),
+  timestampDialogEyebrow: document.getElementById('timestamp-dialog-eyebrow'),
+  timestampDialogTitle: document.getElementById('timestamp-dialog-title'),
+  timestampForm: document.getElementById('timestamp-form'),
+  timestampDate: document.getElementById('timestamp-date'),
+  timestampTime: document.getElementById('timestamp-time'),
+  timestampFormError: document.getElementById('timestamp-form-error'),
+  timestampCancel: document.getElementById('timestamp-cancel'),
+  timestampSave: document.getElementById('timestamp-save'),
   categoryDetailsDialog: document.getElementById('category-details-dialog'),
   categoryDetailsTitle: document.getElementById('category-details-title'),
   categoryDetailsDescription: document.getElementById('category-details-description'),
@@ -944,6 +954,12 @@ async function persistEvent(event) {
   await transactionDone(tx);
 }
 
+async function updateStoredEvent(event) {
+  const tx = await createDatabaseTransaction('readwrite');
+  tx.objectStore(STORE_NAME).put(event);
+  await transactionDone(tx);
+}
+
 async function removeEvent(id) {
   const tx = await createDatabaseTransaction('readwrite');
   tx.objectStore(STORE_NAME).delete(id);
@@ -979,6 +995,12 @@ async function readAllPurchases() {
 async function persistPurchase(purchase) {
   const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
   tx.objectStore(PURCHASE_STORE_NAME).add(purchase);
+  await transactionDone(tx);
+}
+
+async function updateStoredPurchase(purchase) {
+  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
+  tx.objectStore(PURCHASE_STORE_NAME).put(purchase);
   await transactionDone(tx);
 }
 
@@ -1090,7 +1112,14 @@ function capitalizeFirst(value) {
 function formatDateTime(timestamp) {
   const date = new Date(timestamp);
   if (!Number.isFinite(date.getTime())) return 'Data non valida';
-  return `${capitalizeFirst(date.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' }))} · ${date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}`;
+  return `${capitalizeFirst(date.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' }))} · ${date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}`;
+}
+
+function toDateTimeLocalValue(timestamp) {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return '';
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function formatDateShort(date) {
@@ -1191,6 +1220,16 @@ function renderChart(range, periodEvents, now = new Date()) {
   }
 }
 
+function createTimestampEditButton(kind, record, label) {
+  const button = document.createElement('button');
+  button.className = 'edit-timestamp';
+  button.type = 'button';
+  button.textContent = 'Data/ora';
+  button.setAttribute('aria-label', `Modifica data e ora: ${label}, ${formatDateTime(record.timestamp)}`);
+  button.addEventListener('click', () => openTimestampDialog(kind, record));
+  return button;
+}
+
 function renderHistory() {
   const sorted = [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   const visible = sorted.slice(0, MAX_RECENT_EVENTS);
@@ -1198,7 +1237,7 @@ function renderHistory() {
   elements.historyCount.textContent = `${formatNumber(events.length)} ${events.length === 1 ? 'evento' : 'eventi'}`;
   elements.historyFootnote.textContent = events.length > MAX_RECENT_EVENTS
     ? `Mostrate le ${MAX_RECENT_EVENTS} registrazioni più recenti su ${formatNumber(events.length)}. Esporta un CSV per consultare l’intero storico.`
-    : 'Puoi rimuovere una registrazione con il pulsante − accanto all’evento.';
+    : 'Puoi modificare data e ora o rimuovere una registrazione.';
 
   if (visible.length === 0) {
     const empty = document.createElement('div');
@@ -1239,7 +1278,7 @@ function renderHistory() {
     remove.textContent = '−';
     remove.setAttribute('aria-label', `Elimina registrazione: ${label}, ${formatDateTime(event.timestamp)}`);
     remove.addEventListener('click', () => handleDeleteEvent(event));
-    row.append(icon, main, remove);
+    row.append(icon, main, createTimestampEditButton('event', event, label), remove);
     elements.historyList.append(row);
   }
 }
@@ -1397,11 +1436,12 @@ function renderCategoryDetails() {
       ? `${labels[type]}, ${formatDateTime(record.timestamp)}`
       : `${labels[type]}, ${formatCurrency(record.amountCents)}, ${formatDateTime(record.timestamp)}`;
     remove.setAttribute('aria-label', `Elimina ${kind === 'event' ? 'registrazione' : 'acquisto'}: ${itemDescription}`);
+    const editTimestamp = createTimestampEditButton(kind, record, labels[type]);
     remove.addEventListener('click', () => {
       if (kind === 'event') void handleDeleteEvent(record);
       else void handleDeletePurchase(record);
     });
-    row.append(details, remove);
+    row.append(details, editTimestamp, remove);
     elements.categoryDetailsList.append(row);
   }
 }
@@ -1427,7 +1467,7 @@ function renderPurchaseHistory() {
   elements.purchaseHistoryCount.textContent = `${formatNumber(purchases.length)} ${purchases.length === 1 ? 'acquisto' : 'acquisti'}`;
   elements.purchaseHistoryFootnote.textContent = purchases.length > MAX_RECENT_EVENTS
     ? `Mostrati gli ${MAX_RECENT_EVENTS} acquisti più recenti su ${formatNumber(purchases.length)}.`
-    : 'Puoi rimuovere un acquisto dallo storico.';
+    : 'Puoi modificare data e ora o rimuovere un acquisto.';
   if (visible.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
@@ -1469,8 +1509,98 @@ function renderPurchaseHistory() {
     remove.textContent = '−';
     remove.setAttribute('aria-label', `Elimina acquisto: ${label}, ${formatCurrency(purchase.amountCents)}`);
     remove.addEventListener('click', () => void handleDeletePurchase(purchase));
-    row.append(icon, main, amount, remove);
+    row.append(icon, main, amount, createTimestampEditButton('purchase', purchase, label), remove);
     elements.purchaseHistoryList.append(row);
+  }
+}
+
+function openTimestampDialog(kind, record) {
+  if (!isAuthenticated) {
+    openAuthenticationModal();
+    return;
+  }
+  if (elements.timestampDialog.open) return;
+  const labels = kind === 'event' ? EVENT_LABELS : PURCHASE_LABELS;
+  const categoryDetails = suspendCategoryDetails();
+  activeTimestampEdit = { kind, id: record.id, categoryDetails };
+  elements.timestampDialogTitle.textContent = labels[record.type] || 'Registrazione';
+  elements.timestampDialogEyebrow.textContent = kind === 'event' ? 'MODIFICA REGISTRAZIONE' : 'MODIFICA ACQUISTO';
+  const localValue = toDateTimeLocalValue(record.timestamp);
+  elements.timestampDate.value = localValue.slice(0, 10);
+  elements.timestampTime.value = localValue.slice(11, 16);
+  elements.timestampFormError.hidden = true;
+  elements.timestampSave.disabled = false;
+  elements.timestampDialog.showModal();
+  window.requestAnimationFrame(() => elements.timestampDate.focus());
+}
+
+async function saveTimestampEdit() {
+  if (!activeTimestampEdit) return;
+  if (!elements.timestampDate.value || !elements.timestampDate.checkValidity()
+    || !elements.timestampTime.value || !elements.timestampTime.checkValidity()) {
+    elements.timestampFormError.textContent = 'Inserisci una data valida e un orario nel formato 24 ore (00:00–23:59).';
+    elements.timestampFormError.hidden = false;
+    if (!elements.timestampDate.value || !elements.timestampDate.checkValidity()) elements.timestampDate.reportValidity();
+    else elements.timestampTime.reportValidity();
+    return;
+  }
+  const [year, month, day] = elements.timestampDate.value.split('-').map(Number);
+  const [hour, minute] = elements.timestampTime.value.split(':').map(Number);
+  const date = new Date(year, month - 1, day, hour, minute);
+  if (!Number.isFinite(date.getTime()) || date.getFullYear() !== year
+    || date.getMonth() !== month - 1 || date.getDate() !== day
+    || date.getHours() !== hour || date.getMinutes() !== minute) {
+    elements.timestampFormError.textContent = 'La data e l’orario inseriti non sono validi.';
+    elements.timestampFormError.hidden = false;
+    return;
+  }
+
+  const { kind, id, categoryDetails } = activeTimestampEdit;
+  const records = kind === 'event' ? events : purchases;
+  const currentRecord = records.find(record => record.id === id);
+  if (!currentRecord) {
+    elements.timestampFormError.textContent = 'Questa voce non è più presente nello storico. Chiudi e aggiorna la pagina.';
+    elements.timestampFormError.hidden = false;
+    return;
+  }
+
+  const updatedRecord = { ...currentRecord, timestamp: date.toISOString() };
+  elements.timestampSave.disabled = true;
+  elements.timestampFormError.hidden = true;
+  let savedOnline = false;
+  try {
+    if (cloudConfigured) {
+      const table = kind === 'event' ? 'smokelog_events' : 'smokelog_purchases';
+      await supabaseRequest(`${table}?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ timestamp: updatedRecord.timestamp })
+      });
+      savedOnline = true;
+    }
+    if (kind === 'event') {
+      await updateStoredEvent(updatedRecord);
+      events = events.map(record => record.id === id ? updatedRecord : record)
+        .sort((first, second) => new Date(second.timestamp) - new Date(first.timestamp));
+    } else {
+      await updateStoredPurchase(updatedRecord);
+      purchases = purchases.map(record => record.id === id ? updatedRecord : record)
+        .sort((first, second) => new Date(second.timestamp) - new Date(first.timestamp));
+    }
+
+    activeTimestampEdit = null;
+    elements.timestampDialog.close();
+    render();
+    resumeCategoryDetails(categoryDetails);
+    showToast('Data e ora aggiornate.');
+  } catch (error) {
+    console.error(error);
+    elements.timestampSave.disabled = false;
+    const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
+    elements.timestampFormError.textContent = savedOnline
+      ? 'Data e ora aggiornate online, ma non è stato possibile aggiornare la copia su questo dispositivo.'
+      : `Non è stato possibile aggiornare data e ora.${detail}`;
+    elements.timestampFormError.hidden = false;
   }
 }
 
@@ -1696,7 +1826,7 @@ function exportCsv() {
       '',
       event.timestamp,
       date.toLocaleDateString('it-IT'),
-      date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+      date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
     ]);
   }
   const sortedPurchases = [...purchases].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -1708,7 +1838,7 @@ function exportCsv() {
       (purchase.amountCents / 100).toFixed(2),
       purchase.timestamp,
       date.toLocaleDateString('it-IT'),
-      date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+      date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
     ]);
   }
   const csv = '\uFEFF' + rows.map(row => row.map(csvEscape).join(';')).join('\r\n');
@@ -1894,6 +2024,21 @@ function setupEventHandlers() {
   });
   elements.categoryDetailsDialog.addEventListener('click', event => {
     if (event.target === elements.categoryDetailsDialog) elements.categoryDetailsDialog.close();
+  });
+  elements.timestampForm.addEventListener('submit', event => {
+    event.preventDefault();
+    void saveTimestampEdit();
+  });
+  elements.timestampCancel.addEventListener('click', () => elements.timestampDialog.close());
+  elements.timestampDialog.addEventListener('close', () => {
+    if (!activeTimestampEdit) return;
+    const { categoryDetails } = activeTimestampEdit;
+    activeTimestampEdit = null;
+    elements.timestampSave.disabled = false;
+    resumeCategoryDetails(categoryDetails);
+  });
+  elements.timestampDialog.addEventListener('click', event => {
+    if (event.target === elements.timestampDialog) elements.timestampDialog.close();
   });
   elements.purchaseForm.addEventListener('submit', event => {
     event.preventDefault();

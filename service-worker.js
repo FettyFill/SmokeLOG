@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'smokelog-shell-v19';
+const CACHE_NAME = 'smokelog-shell-v22';
 const APP_SHELL = [
   './',
   './index.html',

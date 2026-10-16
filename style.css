@@ -179,6 +179,9 @@ h2 { margin: 0; font-size: 21px; line-height: 1.2; letter-spacing: -.035em; font
 .history-item-date { margin: 4px 0 0; color: var(--muted-2); font-size: 10px; text-transform: capitalize; }
 .delete-event { display: grid; place-items: center; flex: 0 0 33px; width: 33px; height: 33px; border: 1px solid transparent; border-radius: 10px; color: #80919d; background: transparent; cursor: pointer; font-size: 18px; }
 .delete-event:hover { border-color: rgba(255, 159, 128, .15); color: var(--coral); background: rgba(255, 159, 128, .07); }
+.edit-timestamp { flex: 0 0 auto; min-height: 32px; padding: 0 8px; border: 1px solid rgba(102, 224, 179, .16); border-radius: 9px; color: #a9d9c5; background: rgba(102, 224, 179, .045); cursor: pointer; font-size: 9px; font-weight: 650; white-space: nowrap; }
+.edit-timestamp:hover { border-color: rgba(102, 224, 179, .38); color: #e8fff6; background: rgba(102, 224, 179, .1); }
+.edit-timestamp:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
 .empty-state { display: flex; align-items: center; flex-direction: column; padding: 28px 22px; text-align: center; }
 .empty-icon { display: grid; place-items: center; width: 41px; height: 41px; margin-bottom: 12px; border: 1px dashed rgba(146, 171, 183, .25); border-radius: 14px; color: #a1b6c0; font-size: 24px; }
 .empty-state strong { font-size: 12px; }
@@ -255,6 +258,9 @@ h2 { margin: 0; font-size: 21px; line-height: 1.2; letter-spacing: -.035em; font
 .purchase-modal-copy { margin: 9px 0 20px; color: #aebfc5; font-size: 12px; line-height: 1.55; }
 .purchase-form { display: grid; gap: 8px; }
 .purchase-form > label { color: #bdcbd0; font-size: 11px; font-weight: 650; }
+.timestamp-input { width: 100%; min-height: 50px; padding: 0 12px; border: 1px solid rgba(102, 224, 179, .2); border-radius: 13px; color: #effff7; color-scheme: dark; background: #0e171e; font: inherit; font-size: 15px; }
+.timestamp-input:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+.timestamp-time-help { margin-top: -4px; color: var(--muted-2); font-size: 10px; }
 .amount-input-wrap { display: flex; align-items: center; gap: 9px; min-height: 52px; padding: 0 13px; border: 1px solid rgba(102, 224, 179, .2); border-radius: 13px; color: var(--mint); background: #0e171e; font-size: 18px; font-weight: 750; }
 .amount-input-wrap input { width: 100%; border: 0; outline: 0; color: #effff7; background: transparent; font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .amount-input-wrap input::placeholder { color: #5d7079; }
