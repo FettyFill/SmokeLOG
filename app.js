@@ -8,6 +8,7 @@ const MAX_RECENT_EVENTS = 10;
 const CLOUD_BATCH_SIZE = 500;
 const CLOUD_SESSION_KEY = 'smokelog-supabase-session';
 const LAST_SYNC_USER_KEY = 'smokelog-last-sync-user';
+const STATS_PREFERENCES_KEY = 'smokelog-stats-preferences';
 const EVENT_LABELS = {
   cigarette: 'Sigaretta',
   joint: 'Barnei',
@@ -32,6 +33,7 @@ let databaseOpening;
 let events = [];
 let purchases = [];
 let activeRange = 'day';
+let activeStatsView = 'expenses';
 let activeCategoryDetails = null;
 let activeTimestampEdit = null;
 let toastTimer;
@@ -1320,8 +1322,42 @@ function render() {
   if (activeCategoryDetails && elements.categoryDetailsDialog.open) renderCategoryDetails();
 }
 
-function setStatsView(view) {
+function loadStatsPreferences() {
+  try {
+    const savedPreferences = JSON.parse(localStorage.getItem(STATS_PREFERENCES_KEY) || '{}');
+    if (['day', 'week', 'month', 'year'].includes(savedPreferences.range)) activeRange = savedPreferences.range;
+    if (savedPreferences.view === 'expenses' || savedPreferences.view === 'consumption') {
+      activeStatsView = savedPreferences.view;
+    }
+  } catch (error) {
+    console.error(error);
+    showToast('Non è stato possibile recuperare le preferenze delle statistiche.', 'error');
+  }
+}
+
+function saveStatsPreferences() {
+  try {
+    localStorage.setItem(STATS_PREFERENCES_KEY, JSON.stringify({
+      range: activeRange,
+      view: activeStatsView
+    }));
+  } catch (error) {
+    console.error(error);
+    showToast('Preferenze non salvate. Controlla lo spazio disponibile nel browser.', 'error');
+  }
+}
+
+function updateRangeButtons() {
+  document.querySelectorAll('[data-range]').forEach(button => {
+    const selected = button.dataset.range === activeRange;
+    button.classList.toggle('is-active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+}
+
+function setStatsView(view, persist = true) {
   if (view !== 'expenses' && view !== 'consumption') return;
+  activeStatsView = view;
   elements.expenseView.hidden = view !== 'expenses';
   elements.consumptionView.hidden = view !== 'consumption';
   document.querySelectorAll('[data-stats-view]').forEach(button => {
@@ -1329,6 +1365,7 @@ function setStatsView(view) {
     button.classList.toggle('is-active', selected);
     button.setAttribute('aria-pressed', String(selected));
   });
+  if (persist) saveStatsPreferences();
 }
 
 function renderExpenseSummary(periodPurchases) {
@@ -2061,12 +2098,10 @@ function setupEventHandlers() {
   });
   document.querySelectorAll('[data-range]').forEach(button => {
     button.addEventListener('click', () => {
+      if (!['day', 'week', 'month', 'year'].includes(button.dataset.range)) return;
       activeRange = button.dataset.range;
-      document.querySelectorAll('[data-range]').forEach(option => {
-        const selected = option === button;
-        option.classList.toggle('is-active', selected);
-        option.setAttribute('aria-pressed', String(selected));
-      });
+      updateRangeButtons();
+      saveStatsPreferences();
       render();
     });
   });
@@ -2106,6 +2141,9 @@ function setupEventHandlers() {
 
 async function init() {
   // Prepara UI e archivio prima di ripristinare la sessione, che può attivare la sincronizzazione.
+  loadStatsPreferences();
+  setStatsView(activeStatsView, false);
+  updateRangeButtons();
   setupEventHandlers();
   updateAccountControls();
   try {

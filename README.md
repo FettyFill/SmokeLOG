@@ -10,6 +10,7 @@ Una Progressive Web App (PWA) per registrare separatamente sigarette e Barnei. L
 - Selezione di una categoria nel riepilogo per consultare le registrazioni o gli acquisti del periodo e rimuovere singole voci.
 - Modifica della data e dell'ora di ogni registrazione o acquisto dallo storico o dal dettaglio della categoria, con sincronizzazione su Supabase.
 - Contatori per oggi, ultimi 7 giorni, mese corrente e anno corrente.
+- La vista delle statistiche e il periodo selezionato vengono ricordati su questo dispositivo.
 - Grafico riepilogativo per fascia oraria, giorno, settimana del mese o mese dell'anno.
 - Ultime 10 registrazioni, con possibilità di eliminare un evento.
 - Esportazione JSON (backup ripristinabile di consumi e acquisti) e CSV; importazione JSON e cancellazione completa dello storico.
