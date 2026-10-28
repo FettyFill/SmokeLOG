@@ -1,8 +1,8 @@
 {
   "id": "./",
-  "name": "SmokeLog - Diario personale",
-  "short_name": "SmokeLog",
-  "description": "Diario locale per registrare sigarette e canne.",
+  "name": "SmokeLOG - Diario personale",
+  "short_name": "SmokeLOG",
+  "description": "Diario personale per monitorare consumi, abitudini e spese nel tempo.",
   "lang": "it-IT",
   "start_url": "./",
   "scope": "./",

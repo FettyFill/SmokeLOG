@@ -1,90 +1,93 @@
-# SmokeLog — diario personale
+# SmokeLOG
 
-Una Progressive Web App (PWA) per registrare separatamente sigarette e Barnei. L'interfaccia è realizzata con HTML, CSS e JavaScript senza framework. Con la configurazione Supabase, account e database online permettono di ritrovare lo stesso storico da browser e dispositivi diversi.
+**Beta privata 1.1 · documentazione aggiornata al 28 ottobre 2026**
 
-## Funzionalità
+SmokeLOG è un diario personale per registrare consumi e acquisti, osservare le abitudini e impostare obiettivi di spesa. È una Progressive Web App realizzata con HTML, CSS e JavaScript senza framework: funziona in locale e può sincronizzare lo storico con un account Supabase.
 
-- Registrazione di sigarette, Barnei, Mezza Siga, Puzzetta e Cartuccia Puff con data e ora.
-- Registrazione di acquisti per Pacchetto di Siga, Fumo/Weed, Pacchetto Terea, Cartuccia Puff e Pacchetto di Tabacco, con importo in euro.
-- Riepilogo delle spese giornaliere e statistiche per categoria nel periodo selezionato, insieme alle statistiche dei consumi.
-- Selezione di una categoria nel riepilogo per consultare le registrazioni o gli acquisti del periodo e rimuovere singole voci.
-- Modifica della data e dell'ora di ogni registrazione o acquisto dallo storico o dal dettaglio della categoria, con sincronizzazione su Supabase.
-- Contatori per oggi, ultimi 7 giorni, mese corrente e anno corrente.
-- La vista delle statistiche e il periodo selezionato vengono ricordati su questo dispositivo.
-- Grafico riepilogativo per fascia oraria, giorno, settimana del mese o mese dell'anno.
-- Ultime 10 registrazioni, con possibilità di eliminare un evento.
-- Esportazione JSON (backup ripristinabile di consumi e acquisti) e CSV; importazione JSON e cancellazione completa dello storico.
-- Account email/password e sincronizzazione dello storico con Supabase.
-- Manifest, icone e service worker per installazione e caricamento dell'interfaccia offline.
+**Titolare e referente:** Filippo Roggia · [filippo.lumia0@gmail.com](mailto:filippo.lumia0@gmail.com).
 
-## Configurare Supabase
+## Stato del progetto
 
-La sincronizzazione non è attiva finché non configuri un progetto Supabase. Non inserire mai la `service_role` key nel sito: il repository è pubblico. Il codice del browser usa solo la chiave pubblica anon/publishable; l'accesso ai dati è limitato dalle policy Row Level Security.
+La versione locale comprende sincronizzazione incrementale, backup con gestione dei conflitti, statistiche, obiettivi e simulatore di risparmio. Il titolare ha confermato l'esecuzione dello schema SQL su Supabase; il risultato remoto e la versione effettivamente pubblicata non sono stati verificati direttamente. La cancellazione automatica dell'account è implementata ma disabilitata finché la funzione server non viene pubblicata e collaudata.
 
-1. Crea un progetto su [Supabase](https://supabase.com/) e copia il suo **Project URL** e la chiave **publishable** (o `anon` legacy) dalle impostazioni API.
-2. In Supabase apri **SQL Editor**, esegui il contenuto aggiornato di [`supabase-schema.sql`](./supabase-schema.sql). Crea le tabelle per consumi e acquisti, le policy che isolano i dati per account e le funzioni usate per sostituire lo storico durante il ripristino di un backup. Quando aggiungi una nuova tipologia a SmokeLog, riesegui questo script sul progetto esistente per abilitarne la sincronizzazione.
-3. In **Authentication → URL Configuration**, imposta come **Site URL** l'indirizzo GitHub Pages, ad esempio `https://fettyfill.github.io/SmokeLOG/`, e aggiungi lo stesso indirizzo tra i redirect consentiti. Per provare localmente aggiungi anche l'indirizzo HTTPS o `http://localhost` usato dal server locale.
-4. Inserisci URL e chiave pubblica in [`supabase-config.js`](./supabase-config.js), sostituendo i valori segnaposto.
-5. Pubblica tutti i file, incluso `supabase-config.js` e `supabase-schema.sql`, su GitHub Pages. La chiave publishable/anon è visibile nel browser per definizione: **non** è una password e non va confusa con la `service_role` key.
-6. Apri il sito e scegli **Accedi o registrati → Non hai un account? Registrati**. Inserisci email, password e conferma password; il link inviato da Supabase riporta al sito autorizzato. Dopo la conferma, accedi con lo stesso account da ogni dispositivo.
+La beta è destinata al collaudo con dati fittizi. Informativa, configurazione dei fornitori e condizioni per l'uso di dati personali reali richiedono ancora completamento. Il progetto non è presentato come già pronto alla commercializzazione.
 
-Se abiliti la conferma email, il link deve riportare all'indirizzo GitHub Pages configurato. Il browser o l'app di posta possono aprire il link in una nuova scheda: non è possibile forzare il browser a riutilizzare la scheda esistente, ma SmokeLog aggiorna la scheda già aperta quando torni ad essa. In Supabase vai in **Authentication → URL Configuration** e consenti l'URL esatto della pagina pubblicata, incluso il percorso `/SmokeLOG/`. Consumi e acquisti sono sincronizzati in tabelle cloud separate; serve una connessione internet per aggiungere, cancellare o aggiornare i dati online. L'archivio locale IndexedDB è una copia di appoggio, non la copia autorevole.
+## Funzioni
 
-SmokeLog conserva la sessione sul dispositivo e prova a ripristinarla all'apertura della web app. Il token di accesso viene rinnovato quando necessario; non viene chiesto di accedere di nuovo alla sua normale scadenza. Se la sessione viene revocata o si cancellano i dati del browser, sarà necessario autenticarsi di nuovo.
+| Area | Disponibilità |
+| --- | --- |
+| Oggi | Registrazione rapida dei consumi e degli acquisti; totale giornaliero |
+| Statistiche | Spese, quantità, grafici e dettagli per categoria e periodo |
+| Consapevolezza | Spesa mensile, confronti settimanali, distribuzione oraria, budget, limite giornaliero e risparmio stimato |
+| Storico | Filtri, modifica data/ora e cancellazione delle registrazioni |
+| Impostazioni | Categorie personalizzabili, profilo, archivio, backup, privacy e supporto |
+| Account | Accesso email/password, recupero sessione e sincronizzazione tra dispositivi |
+| Offline | Archivio locale e interfaccia disponibile dopo il primo caricamento online |
 
-### Email di registrazione e conferma
+Gli obiettivi e la percentuale del simulatore restano su questo browser, separati per archivio; non sono sincronizzati né inclusi nel backup dello storico. I confronti usano giorni completi e il risparmio è una simulazione basata sugli acquisti, non una previsione garantita.
 
-L'app invia a Supabase la richiesta di registrazione e l'indirizzo di ritorno. Una risposta positiva significa che Supabase ha accettato la richiesta, non garantisce che il provider abbia consegnato l'email. Il mittente SMTP predefinito può inviare solo a indirizzi associati all'organizzazione Supabase e ha un limite attuale di 2 email all'ora; non è il servizio adatto per consegnare conferme agli indirizzi degli utenti.
+## Avvio locale
 
-Se il messaggio non arriva:
+Prerequisiti: Node.js e npm; la CI usa Node.js 22. Per i test UI locali occorre Chrome installato.
 
-1. Controlla **Authentication → Users**: verifica che l'utente sia stato creato e se l'email risulta confermata. Non serve cercare un account nella tabella `smokelog_events`.
-2. Controlla **Authentication → Logs** per errori di invio o limiti di frequenza; verifica anche spam e che l'indirizzo inserito sia corretto.
-3. Verifica **Authentication → URL Configuration**: il redirect consentito deve includere l'URL completo del sito, compreso il percorso `/SmokeLOG/`.
-4. Per inviare email agli utenti, configura un provider SMTP personale in **Supabase Dashboard → Authentication → SMTP Settings**. Servono host, porta, credenziali SMTP e un mittente appartenente a un dominio verificato presso il provider; configura anche i record DNS richiesti (per esempio SPF e DKIM). Consulta la [guida ufficiale Supabase per SMTP](https://supabase.com/docs/guides/auth/auth-smtp).
+```sh
+npm ci
+npm run preview
+```
 
-Se l'app mostra **“Supabase ha raggiunto il limite temporaneo di invio email”**, smetti di premere **Registrati** e **Invia di nuovo l’email di conferma**: altri tentativi possono prolungare il blocco. Verifica prima **Authentication → Users**. Se l'utente esiste ed è in attesa di conferma, non creare account ripetuti; configura SMTP personale, poi richiedi un solo nuovo invio dopo che il limite è rientrato. L'attesa può rimuovere il rate limit temporaneo, ma non rimuove le restrizioni del mittente predefinito verso indirizzi non autorizzati.
+Apri [l'anteprima](http://127.0.0.1:49173). Questo server disabilita Supabase e serve soltanto i file statici dell'app: è adatto a provare interfaccia e archivio locale senza accedere ad account reali. Non usare `file://` per verificare PWA e service worker.
 
-Se l'account è in attesa di conferma, SmokeLog mostra il pulsante evidenziato **Invia di nuovo l’email di conferma**. La risposta positiva conferma solo che Supabase ha accettato la richiesta di reinvio, non che l'email sia stata recapitata. Nei log, `User repeated signup` significa che è stata richiesta di nuovo la registrazione per un indirizzo già presente: ripetere **Registrati** non è un modo affidabile per reinviare la conferma. Non disattivare la conferma email per aggirare un problema di consegna. Se la registrazione appare in **Users** ma non arriva nessuna email, la diagnosi va fatta nei log e nelle impostazioni email del progetto Supabase.
+Per provare un account, usa invece un server statico con la configurazione Supabase prevista per lo staging e autorizza il relativo redirect nel progetto. L'anteprima integrata non è un test del cloud.
 
-Se nei log compaiono `Invalid Refresh Token: Refresh Token Not Found`, il browser sta tentando di riusare una sessione locale non più valida. SmokeLog rimuove questa sessione e richiede un nuovo accesso; questo non elimina lo storico cloud. Il log `Mail.send` insieme a `User confirmation requested` indica che Supabase ha avviato il flusso di invio, ma non certifica la consegna alla casella.
+## Verifiche
 
-Gli account sono elencati in **Authentication → Users**; `public.smokelog_events` contiene i consumi e `public.smokelog_purchases` gli acquisti. Le tabelle restano vuote finché un utente non confermato effettua l'accesso e aggiunge dati.
+```sh
+npm run check
+npm test
+npm run test:ui
+```
 
-L'app richiede un account per accedere a qualunque funzione: finché non hai effettuato l'accesso, lo sfondo resta bloccato e il modulo di accesso/registrazione si apre dal pulsante centrale.
+Chiudi l'anteprima con Ctrl+C prima di avviare i test UI: utilizzano la stessa porta. La pipeline [GitHub Actions](.github/workflows/check.yml) esegue controlli sintattici, test applicativi, SQL e browser; non effettua il deploy. I test non richiedono credenziali Supabase reali. Vedi la [guida di collaudo](docs/TESTING.md) per copertura e prove manuali.
 
-## Aprire il progetto in Visual Studio Code
+## Account e pubblicazione
 
-1. Apri in VS Code la cartella `smokelog-pwa`.
-2. Avvia `index.html` con Live Server o un server statico equivalente.
-3. Configura URL e chiave Supabase prima di provare account e sincronizzazione. L'accesso via `file://` non è una prova valida per service worker e PWA.
+Il progetto configurato è `giwispikyzddqolrqwfz`; il piano Free è stato dichiarato dal titolare. La regione effettiva del database resta da confermare dalla dashboard.
 
-## Pubblicare con GitHub Pages e installare su iPhone
+1. Configura URL e chiave pubblica in `supabase-config.js`. Non inserire una chiave amministrativa nel client.
+2. Esegui `supabase-schema.sql` nel SQL Editor del progetto corretto. Il titolare ha dichiarato di aver completato questo passaggio il 28 ottobre 2026.
+3. Configura Site URL, redirect e invio email per l'ambiente di destinazione.
+4. Pubblica i file statici elencati in [RELEASE.md](RELEASE.md); lo script SQL si esegue sul database, non deve essere servito al browser.
+5. Per l'eliminazione automatica dell'account, pubblica e collauda separatamente la Edge Function prima di abilitare il relativo flag.
 
-1. Carica nella radice del repository tutti i file e la cartella `icons`.
-2. In **Settings → Pages**, seleziona **Deploy from a branch**, il branch `main` e la cartella `/(root)`.
-3. Apri l'indirizzo HTTPS mostrato da GitHub Pages. Per un repository `SmokeLOG`, il percorso mantiene le maiuscole: `https://fettyfill.github.io/SmokeLOG/`.
-4. Su iPhone apri quel link in Safari, scegli **Condividi → Aggiungi alla schermata Home** e, se proposto, attiva **Apri come app web**.
-5. Per accedere ai dati dopo un reset o su un nuovo dispositivo, reinstalla/apri l'app e accedi con lo stesso account Supabase.
+La procedura dettagliata e i controlli prima del rilascio sono in [RELEASE.md](RELEASE.md). Dopo la pubblicazione, verifica aggiornamento della PWA, accesso, sincronizzazione e modalità offline su dispositivi reali.
 
-## Dove sono memorizzati i dati?
+## Dati e riservatezza
 
-Consumi e acquisti sono salvati in tabelle separate nel progetto Supabase e associati all'account autenticato; le policy RLS impediscono agli account di leggere o modificare i dati degli altri utenti. La connessione al servizio usa HTTPS. I dati **non** sono cifrati end-to-end: il progetto Supabase e i suoi amministratori possono tecnicamente accedere al database. SmokeLog non usa analytics né invia i dati a servizi diversi da Supabase per l'autenticazione e la sincronizzazione.
+- Consumi, acquisti e categorie sono conservati in IndexedDB; con un account vengono sincronizzati su Supabase.
+- L'accesso usa policy RLS per account. Non è presente cifratura end-to-end.
+- Uscire dall'account non cancella i dati cloud o la copia locale dell'account.
+- La cancellazione dello storico mantiene record contrassegnati come eliminati per sincronizzare la rimozione. Non equivale alla cancellazione definitiva dell'account.
+- JSON è il formato di backup ripristinabile; CSV è un'esportazione per consultazione.
+- Nessun analytics aggiunto. La sessione viene conservata nel browser.
 
-- Cancellare cookie, dati del browser o resettare il dispositivo rimuove la sessione e le copie locali, ma non i dati online. Accedi di nuovo al tuo account per recuperarli.
-- Esporta comunque periodicamente **Backup e gestione dati → Esporta backup JSON** e conserva il file in un luogo sicuro, come copia indipendente dal servizio online.
-- Un backup JSON esportato contiene abitudini personali: trattalo come un file privato. Il CSV è utile per consultare lo storico, ma il JSON è il formato da usare per ripristinarlo.
-- L'importazione JSON sostituisce consumi e acquisti dell'account sincronizzato dopo una conferma. Esporta un backup prima se vuoi conservare i dati attuali.
-- Il pulsante **Esci dall'account** termina la sessione e rimuove la copia locale dei consumi e degli acquisti dal dispositivo; i dati remoti restano nell'account.
+Le informazioni visibili agli utenti sono in [privacy.html](privacy.html) e [terms.html](terms.html). Il loro stato e le attività ancora necessarie sono descritti nel report.
 
-## Personalizzazione
+## Documentazione del progetto
 
-- Interfaccia e colori: `style.css`.
-- Etichette e struttura della pagina: `index.html`.
-- Database locale, autenticazione, sincronizzazione e import/export: `app.js`.
-- URL e chiave pubblica Supabase: `supabase-config.js`.
-- Tabelle, funzioni di ripristino e policy di accesso: `supabase-schema.sql`.
-- Nome, colori e icone: `manifest.webmanifest` e `icons/`.
-- Cache e funzionamento offline dell'interfaccia: `service-worker.js`.
+| Documento | A cosa serve |
+| --- | --- |
+| [Documentazione ufficiale](docs/PROJECT.md) | Funzionamento, architettura, dati, calcoli e manutenzione |
+| [Report sullo stato attuale](docs/STATUS.md) | Evidenze, limiti, stato del rilascio e priorità |
+| [Guida per tester e verifiche](docs/TESTING.md) | Scenari ripetibili e segnalazione dei problemi |
+| [Guida al rilascio](RELEASE.md) | Attivazione SQL, pubblicazione e cancellazione account |
+| [Registro delle modifiche](CHANGELOG.md) | Modifiche della beta 1.1 |
 
-Se una versione aggiornata non appare, ricarica la pagina o chiudi e riapri la web app; il service worker scarica i file aggiornati e usa la cache quando l'interfaccia è offline. Le operazioni sullo storico cloud richiedono comunque una connessione.
+## File principali
+
+### Cosa caricare su GitHub
+
+Non caricare `node_modules/`: è già esclusa da `.gitignore` e viene ricreata con `npm ci`. Nel repository conserva invece `package.json` e `package-lock.json`, insieme a codice, test, documentazione e workflow. Per pubblicare il sito statico segui l'elenco di `RELEASE.md`: il browser non richiede le dipendenze di sviluppo. Se carichi i file dall'interfaccia web di GitHub, escludi manualmente `node_modules/` dalla selezione: il caricamento web non applica automaticamente il tuo `.gitignore`.
+
+`index.html` contiene l'interfaccia; `style.css` lo stile; `app.js` archivio e flussi applicativi; `insights.js` i calcoli di Consapevolezza; `service-worker.js` la cache offline; `supabase-schema.sql` il database; `supabase/functions/delete-account/` la cancellazione account. Le dipendenze npm sono strumenti di sviluppo e test, non dipendenze runtime del sito.
+
+Per assistenza indica dispositivo, browser, passaggi e risultato atteso. Non inviare password, token o backup personali. Per i problemi di email consulta la [guida SMTP Supabase](https://supabase.com/docs/guides/auth/auth-smtp): una richiesta accettata dal servizio non prova la consegna del messaggio.

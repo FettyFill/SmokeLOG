@@ -7,12 +7,12 @@
   <meta name="description" content="Un diario personale per monitorare consumi e spese, con sincronizzazione privata tramite account.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="SmokeLog">
+  <meta name="apple-mobile-web-app-title" content="SmokeLOG">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
   <link rel="stylesheet" href="./style.css">
-  <title>SmokeLog · Il tuo diario</title>
+  <title>SmokeLOG · Il tuo diario</title>
 </head>
 <body>
   <div class="app-frame is-locked" inert>
@@ -21,107 +21,58 @@
         <img class="brand-icon" src="./icons/icon-192.png" alt="" width="44" height="44">
         <div>
           <p class="eyebrow">IL TUO DIARIO PERSONALE</p>
-          <h1>Smoke<span>Log</span></h1>
+          <h1>Smoke<span>LOG</span></h1>
         </div>
       </div>
-      <div class="privacy-chip"><span class="privacy-dot"></span><span id="privacy-label">Solo sul dispositivo</span></div>
+      <button class="account-access-button" id="account-access-button" type="button">
+        <span class="account-avatar" id="account-access-avatar" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M19 20a7 7 0 0 0-14 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/></svg>
+        </span>
+        <span class="account-access-label" id="account-access-label">Accedi</span>
+      </button>
     </header>
 
     <main>
+      <section class="app-page is-active" id="page-today" data-app-page="today" aria-label="Oggi">
       <section class="today-card" aria-labelledby="today-heading">
         <div class="today-topline">
           <p class="eyebrow" id="today-date">OGGI</p>
           <span class="date-label" id="current-date">—</span>
         </div>
-        <h2 id="today-heading">Le tue registrazioni di oggi</h2>
+        <h2 id="today-heading">Consumi di oggi</h2>
         <div class="today-total-line">
           <span class="today-total" id="today-total">0</span>
           <span class="today-total-label" id="today-total-label">registrazioni</span>
-        </div>
-        <div class="today-split" aria-live="polite">
-          <span><span class="mini-dot dot-cigarette"></span><strong id="today-cigarettes">0</strong> sigarette</span>
-          <span><span class="mini-dot dot-joint"></span><strong id="today-joints">0</strong> Barnei</span>
-          <span><span class="mini-dot dot-half-cigarette"></span><strong id="today-half-cigarettes">0</strong> Mezza Siga</span>
-          <span><span class="mini-dot dot-puzzetta"></span><strong id="today-puzzetta">0</strong> Puzzetta</span>
-          <span><span class="mini-dot dot-puff"></span><strong id="today-puff">0</strong> Cartuccia Puff</span>
         </div>
         <div class="today-card-orb orb-one" aria-hidden="true"></div>
         <div class="today-card-orb orb-two" aria-hidden="true"></div>
       </section>
 
-      <section class="today-expense-card" aria-label="Spesa di oggi">
-        <span class="money-mark" aria-hidden="true">€</span>
-        <div><p class="eyebrow">SPESE DI OGGI</p><strong id="today-expense-total">€ 0,00</strong><small id="today-expense-count">Nessun acquisto registrato</small></div>
-      </section>
-
-      <section class="record-workspace" aria-label="Registra consumi e acquisti">
+      <section class="record-workspace" aria-label="Registra consumi e spese">
         <section class="activity-panel consumption-panel" aria-labelledby="record-heading">
           <div class="section-heading">
             <div><p class="eyebrow">CONSUMI</p><h2 id="record-heading">Hai fumato?</h2></div>
           </div>
-          <div class="record-buttons">
-          <button class="record-button cigarette-button" id="add-cigarette" type="button">
-            <span class="record-symbol cigarette-symbol" aria-hidden="true"><span></span></span>
-            <span class="record-button-copy"><strong>Sigaretta</strong><small>Aggiungi una</small></span>
-            <span class="record-plus" aria-hidden="true">+</span>
-          </button>
-          <button class="record-button joint-button" id="add-joint" type="button">
-            <span class="record-symbol joint-symbol" aria-hidden="true"><span></span></span>
-            <span class="record-button-copy"><strong>Barnei</strong><small>Aggiungi una</small></span>
-            <span class="record-plus" aria-hidden="true">+</span>
-          </button>
-          <button class="record-button half-cigarette-button" id="add-half-cigarette" type="button">
-            <span class="record-symbol half-cigarette-symbol" aria-hidden="true"><span></span></span>
-            <span class="record-button-copy"><strong>Mezza Siga</strong><small>Aggiungi una</small></span>
-            <span class="record-plus" aria-hidden="true">+</span>
-          </button>
-          <button class="record-button puzzetta-button" id="add-puzzetta" type="button">
-            <span class="record-symbol puzzetta-symbol" aria-hidden="true"><span></span></span>
-            <span class="record-button-copy"><strong>Puzzetta</strong><small>Aggiungi una</small></span>
-            <span class="record-plus" aria-hidden="true">+</span>
-          </button>
-          <button class="record-button puff-button" id="add-puff" type="button">
-            <span class="record-symbol puff-symbol" aria-hidden="true"><span></span></span>
-            <span class="record-button-copy"><strong>Cartuccia Puff</strong><small>Aggiungi una</small></span>
-            <span class="record-plus" aria-hidden="true">+</span>
-          </button>
-          </div>
+            <div class="record-buttons" id="record-buttons"></div>
         </section>
-        <section class="activity-panel purchase-panel" aria-labelledby="purchase-heading">
-          <div class="section-heading">
-            <div><p class="eyebrow">ACQUISTI</p><h2 id="purchase-heading">Cos'hai comprato?</h2></div>
-          </div>
-          <div class="record-buttons purchase-buttons">
-            <button class="record-button purchase-button purchase-cigarette" id="buy-cigarette-pack" type="button" data-purchase-type="cigarette-pack">
-              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
-              <span class="record-button-copy"><strong>Pacchetto di Siga</strong><small>Registra la spesa</small></span>
-              <span class="record-plus" aria-hidden="true">+</span>
-            </button>
-            <button class="record-button purchase-button purchase-weed" id="buy-weed" type="button" data-purchase-type="weed">
-              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
-              <span class="record-button-copy"><strong>Fumo/Weed</strong><small>Registra la spesa</small></span>
-              <span class="record-plus" aria-hidden="true">+</span>
-            </button>
-            <button class="record-button purchase-button purchase-terea" id="buy-terea-pack" type="button" data-purchase-type="terea-pack">
-              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
-              <span class="record-button-copy"><strong>Pacchetto Terea</strong><small>Registra la spesa</small></span>
-              <span class="record-plus" aria-hidden="true">+</span>
-            </button>
-            <button class="record-button purchase-button purchase-puff" id="buy-puff-cartridge" type="button" data-purchase-type="puff-cartridge">
-              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
-              <span class="record-button-copy"><strong>Cartuccia Puff</strong><small>Registra la spesa</small></span>
-              <span class="record-plus" aria-hidden="true">+</span>
-            </button>
-            <button class="record-button purchase-button purchase-tobacco" id="buy-tobacco-pack" type="button" data-purchase-type="tobacco-pack">
-              <span class="record-symbol purchase-symbol" aria-hidden="true">€</span>
-              <span class="record-button-copy"><strong>Pacchetto di Tabacco</strong><small>Registra la spesa</small></span>
-              <span class="record-plus" aria-hidden="true">+</span>
-            </button>
-          </div>
-        </section>
+        <button class="expense-launch-button" id="record-expense" type="button">
+          <span class="expense-launch-icon" aria-hidden="true">€</span>
+          <span><strong>Registra una spesa</strong><small>Scegli la categoria e inserisci l’importo</small></span>
+          <span class="record-plus" aria-hidden="true">+</span>
+        </button>
       </section>
-      <p class="microcopy workspace-note">Tocca un acquisto per inserire l'importo pagato. Consumi e spese vengono salvati separatamente.</p>
+      <details class="today-breakdown">
+        <summary>Dettaglio consumi per categoria</summary>
+        <div class="today-split" id="today-category-counts" aria-live="polite"></div>
+      </details>
+      <section class="today-expense-card" aria-label="Spesa di oggi">
+        <span class="money-mark" aria-hidden="true">€</span>
+        <div><p class="eyebrow">SPESE DI OGGI</p><strong id="today-expense-total">€ 0,00</strong><small id="today-expense-count">Nessun acquisto registrato</small></div>
+      </section>
+      <p class="microcopy workspace-note">Le registrazioni restano private e modificabili dallo storico.</p>
+      </section>
 
+      <section class="app-page" id="page-stats" data-app-page="stats" aria-label="Statistiche" hidden>
       <section class="stats-section" aria-labelledby="stats-heading">
         <div class="section-heading stats-title-row">
           <div>
@@ -132,12 +83,55 @@
         <div class="stats-view-switch" role="group" aria-label="Vista delle statistiche">
           <button type="button" class="stats-view-button is-active" data-stats-view="expenses" aria-pressed="true">Spese</button>
           <button type="button" class="stats-view-button" data-stats-view="consumption" aria-pressed="false">Quantità consumate</button>
+          <button type="button" class="stats-view-button" data-stats-view="insights" aria-pressed="false">Consapevolezza</button>
         </div>
-        <div class="range-switch" role="group" aria-label="Periodo delle statistiche">
+        <div class="range-switch" id="stats-range-switch" role="group" aria-label="Periodo delle statistiche">
           <button type="button" class="range-button is-active" data-range="day" aria-pressed="true">Oggi</button>
           <button type="button" class="range-button" data-range="week" aria-pressed="false">7 giorni</button>
           <button type="button" class="range-button" data-range="month" aria-pressed="false">Mese</button>
           <button type="button" class="range-button" data-range="year" aria-pressed="false">Anno</button>
+        </div>
+        <div id="insights-view" class="stats-view-content" hidden>
+          <article class="insight-hero">
+            <p class="eyebrow">IL TUO PUNTO DI PARTENZA</p>
+            <h3>Piccoli passi, più consapevolezza.</h3>
+            <p>Osserva le tue abitudini e scegli un obiettivo alla tua misura.</p>
+            <span id="insight-period" class="insight-period"></span>
+          </article>
+          <div class="insight-grid">
+            <article class="insight-card"><span class="stat-label">Spesa di questo mese</span><strong id="insight-month-spend">—</strong><small>Acquisti registrati fino a oggi</small></article>
+            <article class="insight-card"><span class="stat-label">Media giornaliera</span><strong id="insight-daily-spend">—</strong><small>Spesa degli ultimi 28 giorni completi ÷ 28</small></article>
+            <article class="insight-card"><span class="stat-label">Come cambiano i consumi</span><strong id="insight-change">—</strong><small id="insight-change-detail"></small></article>
+            <article class="insight-card"><span class="stat-label">Come cambia la spesa</span><strong id="insight-spend-change">—</strong><small id="insight-spend-detail"></small></article>
+          </div>
+          <article class="insight-panel">
+            <div class="chart-heading"><div><h3>Quando registri di più</h3><p>Distribuzione dei consumi negli ultimi 28 giorni completi</p></div></div>
+            <div id="insight-hours" class="insight-hours"></div>
+            <p id="insight-peaks" class="microcopy"></p>
+          </article>
+          <article class="insight-panel">
+            <div class="chart-heading"><div><h3>I tuoi obiettivi</h3><p>Facoltativi, modificabili e salvati su questo dispositivo per il tuo archivio.</p></div></div>
+            <form id="goals-form" class="goals-form">
+              <label>Categoria da osservare<select id="goal-category"><option value="all">Tutte le categorie</option></select></label>
+              <div class="goals-fields">
+                <label>Budget mensile · €<input id="goal-budget" type="number" min="0.01" max="100000" step="0.01" inputmode="decimal" placeholder="Es. 100"></label>
+                <label>Limite di registrazioni al giorno<input id="goal-limit" type="number" min="0" max="10000" step="1" inputmode="numeric" placeholder="Es. 5"></label>
+              </div>
+              <p class="microcopy">Il budget comprende tutte le spese. Il limite riguarda la categoria scelta; ogni voce conta come una registrazione, non come una dose equivalente.</p>
+              <div class="goal-actions"><button type="submit" class="primary-button">Salva obiettivi</button><button type="button" id="reset-goals" class="text-button">Rimuovi obiettivi</button></div>
+              <p id="goals-status" class="microcopy" role="status"></p>
+            </form>
+            <div id="goal-progress" class="goal-progress"></div>
+          </article>
+          <article class="insight-panel savings-panel">
+            <p class="eyebrow">UNO SCENARIO POSSIBILE</p><h3>Quanto potresti risparmiare?</h3>
+            <label for="savings-reduction" class="savings-label">Riduzione della spesa <output id="savings-percent" for="savings-reduction">20%</output></label>
+            <input id="savings-reduction" type="range" min="0" max="100" step="5" value="20">
+            <div class="savings-values" aria-live="polite"><div><strong id="savings-month">—</strong><small>in 30 giorni</small></div><div><strong id="savings-year">—</strong><small>in 365 giorni</small></div></div>
+            <p id="savings-context" class="microcopy"></p>
+            <p class="microcopy">Simulazione: media degli acquisti degli ultimi 28 giorni completi × giorni × riduzione. Presuppone prezzi e abitudini costanti. Ridurre i consumi non comporta automaticamente lo stesso calo degli acquisti.</p>
+          </article>
+          <p class="microcopy insight-method">I confronti usano gli ultimi 7 giorni completi e i 7 precedenti, escludendo oggi. I giorni senza registrazioni valgono zero: dati incompleti possono alterare il confronto.</p>
         </div>
         <div id="expense-view" class="stats-view-content">
           <section class="expense-summary" aria-labelledby="expense-heading">
@@ -145,6 +139,12 @@
             <div><p class="eyebrow">TOTALE SPESO</p><h3 id="expense-heading">Nel periodo</h3></div>
             <strong id="period-expense-total">€ 0,00</strong>
           </div>
+          <article class="expense-chart-card expense-trend-card">
+            <div class="chart-heading">
+              <div><h3>Andamento spese</h3><p id="expense-trend-subtitle">Totale per periodo</p></div>
+            </div>
+            <div id="expense-trend-chart" class="expense-trend-chart" aria-label="Grafico dell’andamento delle spese"></div>
+          </article>
           <div class="expense-category-grid" id="expense-category-grid"></div>
           <article class="expense-chart-card">
             <div class="chart-heading">
@@ -162,32 +162,20 @@
             <div class="stat-value" id="period-total">0</div>
             <span class="stat-footnote">registrazioni</span>
           </article>
-          <button type="button" class="stat-card category-stat-card" data-event-type="cigarette">
-            <span class="stat-label">Sigarette</span>
-            <strong class="stat-value cigarette-color" id="period-cigarettes">0</strong>
-            <span class="stat-footnote">nel periodo · dettagli</span>
-          </button>
-          <button type="button" class="stat-card category-stat-card" data-event-type="joint">
-            <span class="stat-label">Barnei</span>
-            <strong class="stat-value joint-color" id="period-joints">0</strong>
-            <span class="stat-footnote">nel periodo · dettagli</span>
-          </button>
-          <button type="button" class="stat-card category-stat-card" data-event-type="half-cigarette">
-            <span class="stat-label">Mezza Siga</span>
-            <strong class="stat-value half-cigarette-color" id="period-half-cigarettes">0</strong>
-            <span class="stat-footnote">nel periodo · dettagli</span>
-          </button>
-          <button type="button" class="stat-card category-stat-card" data-event-type="puzzetta">
-            <span class="stat-label">Puzzetta</span>
-            <strong class="stat-value puzzetta-color" id="period-puzzetta">0</strong>
-            <span class="stat-footnote">nel periodo · dettagli</span>
-          </button>
-          <button type="button" class="stat-card category-stat-card" data-event-type="puff">
-            <span class="stat-label">Cartuccia Puff</span>
-            <strong class="stat-value puff-color" id="period-puff">0</strong>
-            <span class="stat-footnote">nel periodo · dettagli</span>
-          </button>
+          <div class="category-stats-grid" id="category-stats-grid"></div>
           </div>
+          <section class="weekly-insights" id="weekly-insights" aria-label="Riepilogo degli ultimi sette giorni" hidden>
+            <div class="weekly-insights-heading">
+              <h3>Questa settimana</h3>
+              <p id="weekly-comparison">Confronto con i 7 giorni precedenti</p>
+            </div>
+            <div class="weekly-insights-grid">
+              <article><span>Registrazioni</span><strong id="weekly-total">0</strong><small id="weekly-change">—</small></article>
+              <article><span>Spesa</span><strong id="weekly-spend">€ 0,00</strong><small id="weekly-daily-spend">€ 0,00 al giorno</small></article>
+              <article><span>Fascia più attiva</span><strong id="weekly-peak-time">—</strong><small>per numero di registrazioni</small></article>
+              <article><span>Giorno più attivo</span><strong id="weekly-peak-day">—</strong><small>per numero di registrazioni</small></article>
+            </div>
+          </section>
           <article class="chart-card">
           <div class="chart-heading">
             <div>
@@ -200,50 +188,111 @@
           </article>
         </div>
       </section>
+      </section>
 
+      <section class="app-page" id="page-history" data-app-page="history" aria-label="Storico" hidden>
       <section class="history-section" aria-labelledby="history-heading">
         <div class="section-heading history-heading-row">
           <div>
-            <p class="eyebrow">ATTIVITÀ RECENTE</p>
-            <h2 id="history-heading">Ultime registrazioni</h2>
+            <p class="eyebrow">ATTIVITÀ</p>
+            <h2 id="history-heading">Storico completo</h2>
           </div>
-          <span class="history-count" id="history-count">0 eventi</span>
+          <span class="history-count" id="history-count">0 attività</span>
+        </div>
+        <div class="history-filters">
+          <label class="visually-hidden" for="history-kind-filter">Tipo di attività</label>
+          <select id="history-kind-filter" class="history-filter-select">
+            <option value="all">Tutte</option>
+            <option value="event">Consumi</option>
+            <option value="purchase">Spese</option>
+          </select>
+          <label class="visually-hidden" for="history-range-filter">Periodo dello storico</label>
+          <select id="history-range-filter" class="history-filter-select">
+            <option value="all">Ogni periodo</option>
+            <option value="day">Oggi</option>
+            <option value="week">Ultimi 7 giorni</option>
+            <option value="month">Questo mese</option>
+          </select>
         </div>
         <div class="history-card" id="history-list" aria-live="polite">
           <div class="empty-state">
             <span class="empty-icon" aria-hidden="true">＋</span>
-            <strong>Ancora nessuna registrazione</strong>
-            <p>Quando aggiungerai una sigaretta o un Barnei, lo troverai qui.</p>
+            <strong>Ancora nessuna attività</strong>
+            <p>Le registrazioni e le spese compariranno qui.</p>
           </div>
         </div>
-        <p class="history-footnote" id="history-footnote">Vengono mostrate le 10 registrazioni più recenti.</p>
+        <p class="history-footnote" id="history-footnote">Le attività sono mostrate dalla più recente.</p>
+        <button type="button" class="secondary-button history-load-more" id="history-load-more" hidden>Mostra altre attività</button>
+      </section>
       </section>
 
-      <section class="history-section purchase-history-section" aria-labelledby="purchase-history-heading">
-        <div class="section-heading history-heading-row">
-          <div><p class="eyebrow">PORTAFOGLIO</p><h2 id="purchase-history-heading">Ultimi acquisti</h2></div>
-          <span class="history-count" id="purchase-history-count">0 acquisti</span>
-        </div>
-        <div class="history-card" id="purchase-history-list" aria-live="polite"></div>
-        <p class="history-footnote" id="purchase-history-footnote">Puoi rimuovere un acquisto dallo storico.</p>
+      <section class="app-page" id="page-settings" data-app-page="settings" aria-label="Impostazioni" hidden>
+      <section class="settings-page-heading">
+        <p class="eyebrow">PERSONALE</p>
+        <h2>Impostazioni</h2>
+        <p>Account, privacy e gestione dei tuoi dati.</p>
       </section>
-
-      <details class="data-tools">
-        <summary><span class="settings-summary-icon" aria-hidden="true">↕</span><span><strong>Backup e gestione dati</strong><small>Esporta, ripristina o elimina lo storico</small></span><span class="summary-chevron" aria-hidden="true">⌄</span></summary>
+      <details class="settings-section" data-settings-key="account" open>
+        <summary><span class="settings-summary-icon" aria-hidden="true">◎</span><span><strong>Account e profilo</strong><small>Sincronizzazione e dati personali</small></span><span class="summary-chevron" aria-hidden="true">⌄</span></summary>
         <div class="data-tools-content">
           <h3>Account e sincronizzazione</h3>
-          <p>Accedi allo stesso account da ogni dispositivo: consumi e acquisti vengono conservati in tabelle separate nel database online e ricaricati quando apri l’app. La password non viene salvata da SmokeLog. I dati sono riservati al tuo account, ma non sono cifrati end-to-end.</p>
+          <p>Accedi allo stesso account da ogni dispositivo per ritrovare consumi e spese. L’accesso è gestito da Supabase. I dati sono riservati al tuo account, ma non sono cifrati end-to-end.</p>
           <p id="account-status" role="status" aria-live="polite">Non hai effettuato l’accesso.</p>
           <div id="signed-in-controls" class="backup-buttons account-actions" hidden>
+            <section class="profile-settings" aria-labelledby="profile-settings-title">
+              <h3 id="profile-settings-title">Profilo</h3>
+              <p>Il nickname e la foto vengono mostrati nel pulsante account. La foto è privata e visibile solo dal tuo account.</p>
+              <form id="profile-form" class="profile-form">
+                <label for="profile-nickname">Nickname</label>
+                <input id="profile-nickname" type="text" maxlength="32" autocomplete="nickname" placeholder="Il tuo nickname" required>
+                <label for="profile-avatar-file">Foto profilo</label>
+                <div class="profile-avatar-picker">
+                  <span class="profile-avatar-preview" id="profile-avatar-preview" aria-hidden="true"></span>
+                  <label class="secondary-button profile-file-button" for="profile-avatar-file">Scegli una foto</label>
+                  <input id="profile-avatar-file" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+                  <button type="button" class="text-button" id="remove-profile-avatar" hidden>Rimuovi foto</button>
+                </div>
+                <small class="profile-help">JPG, PNG o WebP. L’immagine viene ridimensionata prima del caricamento.</small>
+                <p id="profile-form-status" class="profile-form-status" role="status" aria-live="polite" hidden></p>
+                <button type="submit" class="primary-button" id="save-profile">Salva profilo</button>
+              </form>
+            </section>
             <button type="button" class="secondary-button" id="sign-out">Esci dall’account</button>
           </div>
-          <p>Il reset del browser o del dispositivo elimina la sessione, non lo storico online: installa o apri SmokeLog e accedi di nuovo. Esporta comunque un backup JSON periodico.</p>
+          <p>Se cambi dispositivo o cancelli i dati del browser, accedi di nuovo per ritrovare lo storico online. Puoi anche conservare una copia indipendente con un backup JSON.</p>
+        </div>
+      </details>
+      <details class="settings-section" data-settings-key="categories">
+        <summary><span class="settings-summary-icon" aria-hidden="true">◉</span><span><strong>Categorie di consumo</strong><small>Personalizza le voci registrate</small></span><span class="summary-chevron" aria-hidden="true">⌄</span></summary>
+        <div class="data-tools-content">
+          <h3>Categorie di consumo</h3>
+          <p>Rinomina, riordina o disattiva le categorie. I nuovi pulsanti hanno statistiche dedicate; le registrazioni sono salvate sul dispositivo e, se hai effettuato l’accesso, sincronizzate con il tuo account. Le categorie già presenti nello storico restano disponibili per i dati passati.</p>
+          <div id="category-manager" class="category-manager"></div>
+          <p id="category-settings-status" class="category-settings-status" role="status" aria-live="polite"></p>
+          <form id="category-form" class="category-form">
+            <label for="category-name">Aggiungi categoria</label>
+            <div class="category-form-row">
+              <input id="category-name" type="text" maxlength="28" autocomplete="off" placeholder="Nome categoria" required>
+              <button type="submit" class="secondary-button">Aggiungi</button>
+            </div>
+          </form>
+        </div>
+      </details>
+      <details class="settings-section" data-settings-key="storage">
+        <summary><span class="settings-summary-icon" aria-hidden="true">▣</span><span><strong>Archivio locale</strong><small>Protezione dei dati su questo dispositivo</small></span><span class="summary-chevron" aria-hidden="true">⌄</span></summary>
+        <div class="data-tools-content">
           <h3>Archivio locale e backup</h3>
-          <p>Consumi e acquisti sono conservati in archivi separati su questo browser e sincronizzati separatamente con il tuo account. La protezione del browser dalla rimozione automatica non impedisce la cancellazione manuale dei dati del sito.</p>
+          <p>Una copia dei dati è conservata su questo browser. Puoi chiedere al browser di proteggerla dalla rimozione automatica; la cancellazione manuale dei dati del sito resta possibile.</p>
           <p id="storage-status" role="status" aria-live="polite">Controllo della protezione dell’archivio…</p>
           <div class="backup-buttons">
             <button type="button" class="secondary-button" id="protect-storage">Proteggi dati su questo dispositivo</button>
           </div>
+        </div>
+      </details>
+      <details class="settings-section" data-settings-key="backup">
+        <summary><span class="settings-summary-icon" aria-hidden="true">↕</span><span><strong>Backup e ripristino</strong><small>Esporta o importa una copia dei dati</small></span><span class="summary-chevron" aria-hidden="true">⌄</span></summary>
+        <div class="data-tools-content">
+          <h3>Backup e ripristino</h3>
           <p>Per avere anche una copia indipendente dall’account, esporta un backup JSON e salvalo in un luogo sicuro.</p>
           <div class="backup-buttons">
             <button type="button" class="secondary-button" id="export-json">Esporta backup JSON</button>
@@ -251,27 +300,55 @@
             <button type="button" class="secondary-button" id="import-json">Importa backup JSON</button>
             <input type="file" id="import-file" accept=".json,application/json" hidden>
           </div>
+        </div>
+      </details>
+      <details class="settings-section" data-settings-key="privacy">
+        <summary><span class="settings-summary-icon" aria-hidden="true">!</span><span><strong>Privacy e dati</strong><small>Informazioni e cancellazione dello storico</small></span><span class="summary-chevron" aria-hidden="true">⌄</span></summary>
+        <div class="data-tools-content">
+          <h3>Privacy e cancellazione</h3>
+          <p>I dati restano sul dispositivo finché non attivi la sincronizzazione con un account. SmokeLOG non usa analytics.</p>
+          <p><a href="./privacy.html">Privacy e gestione dei dati</a> · <a href="./terms.html">Condizioni della beta</a></p>
+          <p>Beta privata di Filippo Roggia. Per assistenza o richieste sui dati: <a href="mailto:filippo.lumia0@gmail.com">filippo.lumia0@gmail.com</a>. Per segnalare un problema indica cosa stavi facendo e il dispositivo, senza inviare password o lo storico personale.</p>
           <div class="danger-zone">
-            <div><strong>Elimina tutto lo storico</strong><p>Elimina consumi e acquisti, anche dall'account online. Questa azione non si può annullare.</p></div>
+            <div><strong>Elimina tutto lo storico</strong><p>Elimina consumi e acquisti da questo archivio. Se un account è collegato, la cancellazione viene sincronizzata quando possibile.</p></div>
             <button type="button" class="danger-button" id="clear-data">Elimina</button>
+          </div>
+          <div class="danger-zone">
+            <div><strong>Elimina account e dati cloud</strong><p id="delete-account-help">Per richiedere la cancellazione durante la beta, scrivi al supporto dall’indirizzo associato al tuo account.</p></div>
+            <button type="button" class="danger-button" id="delete-account" hidden>Elimina account</button>
           </div>
         </div>
       </details>
+      <footer class="app-footer">
+        <span class="footer-mark">S·L</span>
+        <p>Un dato alla volta. Senza giudizi.</p>
+        <p class="footer-privacy"><span class="privacy-dot"></span> <span id="footer-privacy-label">Solo sul dispositivo · Nessun analytics</span></p>
+        <p class="version-label">SmokeLOG · beta 1.1</p>
+      </footer>
+      </section>
     </main>
 
-    <footer class="app-footer">
-      <span class="footer-mark">S·L</span>
-      <p>Un dato alla volta. Senza giudizi.</p>
-      <p class="footer-privacy"><span class="privacy-dot"></span> <span id="footer-privacy-label">Solo sul dispositivo · Nessun analytics</span></p>
-      <p class="version-label">SmokeLog · versione 1.0</p>
-    </footer>
+    <nav class="bottom-nav" aria-label="Navigazione principale">
+      <button type="button" class="bottom-nav-button is-active" data-page-target="today" aria-current="page">
+        <svg class="bottom-nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="m3.5 10.5 8.5-7 8.5 7v9a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19.5v-9Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 21v-7h6v7" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>Oggi</span>
+      </button>
+      <button type="button" class="bottom-nav-button" data-page-target="stats">
+        <svg class="bottom-nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M4 20V10m5 10V4m5 16v-7m5 7V7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Statistiche</span>
+      </button>
+      <button type="button" class="bottom-nav-button" data-page-target="history">
+        <svg class="bottom-nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M4 7v5h5M5.2 12a7 7 0 1 0 2-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8v4l2.5 1.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Storico</span>
+      </button>
+      <button type="button" class="bottom-nav-button" data-page-target="settings">
+        <svg class="bottom-nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19.39 8.94 L21.85 10.26 L21.85 13.74 L19.39 15.06 L19.39 15.06 L20.19 17.74 L17.74 20.19 L15.06 19.39 L15.06 19.39 L13.74 21.85 L10.26 21.85 L8.94 19.39 L8.94 19.39 L6.26 20.19 L3.81 17.74 L4.61 15.06 L4.61 15.06 L2.15 13.74 L2.15 10.26 L4.61 8.94 L4.61 8.94 L3.81 6.26 L6.26 3.81 L8.94 4.61 L8.94 4.61 L10.26 2.15 L13.74 2.15 L15.06 4.61 L15.06 4.61 L17.74 3.81 L20.19 6.26 L19.39 8.94 Z"/><circle cx="12" cy="12" r="3.2"/></svg><span>Impostazioni</span>
+      </button>
+    </nav>
   </div>
 
   <div id="auth-gate" class="auth-gate" hidden>
     <div class="auth-gate-card">
-      <p class="eyebrow">ACCESSO RICHIESTO</p>
-      <p id="auth-gate-message">Accedi o crea un account per usare SmokeLog.</p>
-      <button type="button" class="primary-button" id="open-auth-modal">Accedi o registrati</button>
+      <p class="eyebrow">ARCHIVIO LOCALE</p>
+      <p id="auth-gate-message">Caricamento del tuo archivio locale…</p>
+      <button type="button" class="primary-button" id="open-auth-modal" disabled>Caricamento…</button>
     </div>
   </div>
 
@@ -279,7 +356,7 @@
     <button type="button" class="auth-close" id="close-auth-modal" aria-label="Chiudi finestra di accesso">×</button>
     <p class="eyebrow">SMOKELOG</p>
     <h2 id="auth-title">Accedi al tuo account</h2>
-    <p id="auth-intro" class="auth-intro">Lo storico è privato e sincronizzato sul tuo account.</p>
+    <p id="auth-intro" class="auth-intro">Collega l’account per sincronizzare i dati locali tra i tuoi dispositivi.</p>
     <form id="auth-form" novalidate>
       <p id="account-modal-status" class="auth-status" role="status" aria-live="polite">Inserisci email e password per continuare.</p>
       <div class="account-fields">
@@ -289,6 +366,14 @@
         <input id="account-password" type="password" autocomplete="current-password" minlength="6" required>
         <label id="confirm-password-label" for="confirm-password" hidden>Conferma password</label>
         <input id="confirm-password" type="password" autocomplete="new-password" minlength="6" hidden>
+      </div>
+      <div id="signup-profile-fields" class="signup-profile-fields" hidden>
+        <label for="signup-nickname">Nickname</label>
+        <input id="signup-nickname" type="text" maxlength="32" autocomplete="nickname" placeholder="Come vuoi essere chiamato?" required>
+        <label for="signup-avatar-file">Foto profilo (facoltativa)</label>
+        <input id="signup-avatar-file" type="file" accept="image/jpeg,image/png,image/webp">
+        <span class="signup-avatar-preview" id="signup-avatar-preview" aria-hidden="true"></span>
+        <small>JPG, PNG o WebP. Se l’email va confermata, la foto scelta resta in attesa su questo dispositivo fino al primo accesso.</small>
       </div>
       <div class="auth-actions">
         <button type="submit" class="primary-button" id="sign-in">Accedi</button>
@@ -309,10 +394,19 @@
 
   <dialog id="purchase-dialog" class="purchase-modal" aria-labelledby="purchase-dialog-title">
     <span class="purchase-modal-symbol" aria-hidden="true">€</span>
-    <p class="eyebrow">NUOVO ACQUISTO</p>
-    <h2 id="purchase-dialog-title"></h2>
-    <p class="purchase-modal-copy">Quanto hai speso? L'importo sarà salvato nel tuo storico personale.</p>
+    <p class="eyebrow">NUOVA SPESA</p>
+    <h2 id="purchase-dialog-title">Registra una spesa</h2>
+    <p class="purchase-modal-copy">Scegli cosa hai acquistato e inserisci l’importo.</p>
     <form id="purchase-form" class="purchase-form" novalidate>
+      <label for="purchase-type">Categoria</label>
+      <select id="purchase-type" class="purchase-category-select" required>
+        <option value="">Seleziona una categoria</option>
+        <option value="cigarette-pack">Pacchetto di Siga</option>
+        <option value="weed">Fumo/Weed</option>
+        <option value="terea-pack">Pacchetto Terea</option>
+        <option value="puff-cartridge">Cartuccia Puff</option>
+        <option value="tobacco-pack">Pacchetto di Tabacco</option>
+      </select>
       <label for="purchase-amount">Importo pagato</label>
       <div class="amount-input-wrap"><span aria-hidden="true">€</span><input id="purchase-amount" type="number" inputmode="decimal" min="0.01" max="99999999.99" step="0.01" placeholder="0,00" required></div>
       <p id="purchase-form-error" class="purchase-form-error" role="alert" hidden></p>
@@ -331,7 +425,7 @@
       <label for="timestamp-date">Data</label>
       <input id="timestamp-date" class="timestamp-input" type="date" required>
       <label for="timestamp-time">Orario (24 ore)</label>
-      <input id="timestamp-time" class="timestamp-input" type="text" inputmode="numeric" autocomplete="off" placeholder="HH:MM" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxlength="5" aria-describedby="timestamp-time-help" required>
+      <input id="timestamp-time" class="timestamp-input" type="text" autocomplete="off" placeholder="HH:MM" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxlength="5" aria-describedby="timestamp-time-help" required>
       <small id="timestamp-time-help" class="timestamp-time-help">Inserisci l’orario da 00:00 a 23:59.</small>
       <p id="timestamp-form-error" class="purchase-form-error" role="alert" hidden></p>
       <div class="purchase-modal-actions">
@@ -367,6 +461,7 @@
   </dialog>
 
   <script src="./supabase-config.js" defer></script>
+  <script src="./insights.js" defer></script>
   <script src="./app.js" defer></script>
 </body>
 </html>

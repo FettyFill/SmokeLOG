@@ -1,11 +1,14 @@
 'use strict';
 
-const CACHE_NAME = 'smokelog-shell-v24';
+const CACHE_NAME = 'smokelog-shell-v39';
 const APP_SHELL = [
   './',
   './index.html',
   './style.css',
   './app.js',
+  './insights.js',
+  './privacy.html',
+  './terms.html',
   './supabase-config.js',
   './manifest.webmanifest',
   './icons/icon-192.png',

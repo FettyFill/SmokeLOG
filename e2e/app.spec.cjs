@@ -1,0 +1,67 @@
+const { test, expect } = require('@playwright/test');
+test('insights, goals, reload, reduced motion and private local records', async ({ page, context }, testInfo) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('https://**/*', route => route.abort());
+  await page.goto('/');
+  await expect(page.locator('#record-buttons button')).toHaveCount(5);
+  await page.locator('#record-buttons button').first().click();
+  await expect(page.locator('#today-total')).toHaveText('1');
+  await page.locator('[data-page-target="stats"]').click();
+  await page.getByRole('button', { name: 'Consapevolezza', exact: true }).click();
+  await expect(page.locator('#insights-view')).toBeVisible();
+  await expect(page.locator('#stats-range-switch')).toBeHidden();
+  await expect(page.locator('#savings-month')).toHaveText('—');
+  await page.locator('#goal-budget').fill('100');
+  await page.locator('#goal-limit').fill('5');
+  await page.getByRole('button', { name: 'Salva obiettivi', exact: true }).click();
+  await expect(page.locator('#goal-progress')).toContainText('1 di 5');
+  await page.reload();
+  await page.locator('[data-page-target="stats"]').click();
+  await expect(page.locator('#insights-view')).toBeVisible();
+  await expect(page.locator('#goal-budget')).toHaveValue('100');
+  await expect(page.locator('#goal-limit')).toHaveValue('5');
+  await expect(page.locator('#today-total')).toHaveText('1');
+  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.locator('#today-total')).toHaveText('1');
+  await context.setOffline(false);
+  await page.locator('[data-page-target="stats"]').click();
+  // Populate only the isolated test browser with synthetic history.
+  await page.evaluate(async () => {
+    for (let days = 1; days <= 28; days++) {
+      const date = new Date(); date.setDate(date.getDate() - days); date.setHours(18, 0, 0, 0);
+      await persistPurchase({ id: makeId(), type: 'cigarette-pack', amountCents: 500, timestamp: date.toISOString(), updatedAt: date.toISOString() });
+      await persistEvent({ id: makeId(), type: 'cigarette', timestamp: date.toISOString(), updatedAt: date.toISOString() });
+    }
+    events = await readAllEvents(); purchases = await readAllPurchases(); render();
+  });
+  await expect(page.locator('#savings-month')).toContainText('30,00');
+  await page.locator('#savings-reduction').fill('50');
+  await expect(page.locator('#savings-month')).toContainText('75,00');
+  await expect(page.locator('#insight-change')).toHaveText('0%');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('consapevolezza.png'), fullPage: true });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await page.locator('#insights-view').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+  await page.getByRole('button', { name: 'Rimuovi obiettivi', exact: true }).click();
+  await expect(page.locator('#goal-progress')).toContainText('Nessun obiettivo');
+  await page.locator('[data-page-target="settings"]').click();
+  await page.locator('[data-settings-key="privacy"] summary').click();
+  await expect(page.getByRole('link', { name: 'filippo.lumia0@gmail.com' })).toBeVisible();
+  await page.locator('[data-settings-key="categories"] summary').click();
+  const categoryName = page.locator('#category-manager input[type="text"]').first();
+  await categoryName.fill('Sigaretta test');
+  await page.evaluate(() => render());
+  await expect(categoryName).toHaveValue('Sigaretta test');
+  await expect(categoryName).toBeFocused();
+  await categoryName.press('Tab');
+  await expect(page.locator('#category-settings-status')).toContainText('salvate');
+  await page.reload();
+  await expect(page.locator('#record-buttons button').first()).toContainText('Sigaretta test');
+  await page.locator('[data-page-target="stats"]').click();
+  await page.setViewportSize({ width: 320, height: 740 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});

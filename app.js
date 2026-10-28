@@ -1,14 +1,22 @@
 'use strict';
 
 const DB_NAME = 'smokelog-local-db';
-const DB_VERSION = 2;
+const DB_VERSION = 6;
+const SYNC_STORE_NAME = 'sync-state';
 const STORE_NAME = 'events';
 const PURCHASE_STORE_NAME = 'purchases';
-const MAX_RECENT_EVENTS = 10;
+const CATEGORY_STORE_NAME = 'categories';
+const PROFILE_DRAFT_STORE_NAME = 'profile-drafts';
+const AVATAR_BUCKET = 'smokelog-avatars';
+const GUEST_OWNER_ID = 'guest';
+const HISTORY_PAGE_SIZE = 20;
 const CLOUD_BATCH_SIZE = 500;
+const MAX_BACKUP_FILE_SIZE = 10 * 1024 * 1024;
 const CLOUD_SESSION_KEY = 'smokelog-supabase-session';
 const LAST_SYNC_USER_KEY = 'smokelog-last-sync-user';
+const CATEGORY_PREFERENCES_KEY = 'smokelog-category-preferences';
 const STATS_PREFERENCES_KEY = 'smokelog-stats-preferences';
+const SETTINGS_SECTIONS_KEY = 'smokelog-settings-sections';
 const EVENT_LABELS = {
   cigarette: 'Sigaretta',
   joint: 'Barnei',
@@ -16,9 +24,22 @@ const EVENT_LABELS = {
   puzzetta: 'Puzzetta',
   puff: 'Cartuccia Puff'
 };
-const EVENT_CATEGORY_LABELS = {
-  ...EVENT_LABELS,
-  cigarette: 'Sigarette'
+const DEFAULT_EVENT_CATEGORIES = [
+  { id: 'cigarette', name: 'Sigaretta', color: 'blue' },
+  { id: 'joint', name: 'Barnei', color: 'mint' },
+  { id: 'half-cigarette', name: 'Mezza Siga', color: 'violet' },
+  { id: 'puzzetta', name: 'Puzzetta', color: 'amber' },
+  { id: 'puff', name: 'Cartuccia Puff', color: 'cyan' }
+];
+const CATEGORY_COLORS = {
+  blue: '#88b9ff',
+  mint: '#66e0b3',
+  violet: '#c49be6',
+  amber: '#e8b878',
+  cyan: '#8bd5e8',
+  coral: '#ff9f80',
+  pink: '#eb9acb',
+  slate: '#a4b4bf'
 };
 const PURCHASE_LABELS = {
   'cigarette-pack': 'Pacchetto di Siga',
@@ -32,20 +53,39 @@ let database;
 let databaseOpening;
 let events = [];
 let purchases = [];
+let categories = [];
+let activeOwnerId = GUEST_OWNER_ID;
 let activeRange = 'day';
 let activeStatsView = 'expenses';
 let activeCategoryDetails = null;
 let activeTimestampEdit = null;
+let historyKindFilter = 'all';
+let historyRangeFilter = 'all';
+let historyVisibleCount = HISTORY_PAGE_SIZE;
 let toastTimer;
 let cloudSession = null;
 let isAuthenticated = false;
-let hasResolvedInitialSession = false;
+let isAppReady = false;
+// Incrementato dopo ogni modifica locale. La sincronizzazione usa questo
+// contatore per non sostituire lo storico con una fotografia ormai vecchia.
+let localMutationVersion = 0;
+let cloudSyncNeedsAnotherPass = false;
 let isPasswordRecovery = false;
 let authMode = 'signin';
 let awaitingEmailConfirmation = false;
 let authRequestPending = false;
+let profileSavePending = false;
 let authRestorePromise = null;
 let cloudSyncPromise = null;
+let cloudSyncTimer = null;
+let signupAvatarDraft = null;
+let profileAvatarDraft = null;
+let removeProfileAvatarOnSave = false;
+let profileAvatarPreviewUrl = null;
+let signupAvatarPreviewUrl = null;
+let resolvedAvatarCache = null;
+let avatarResolutionKey = '';
+let avatarResolutionPromise = null;
 
 const supabaseConfig = window.SMOKELOG_SUPABASE_CONFIG || {};
 // Abilita l'accesso cloud solo se URL e chiave pubblica hanno un formato utilizzabile.
@@ -59,21 +99,15 @@ const elements = {
   currentDate: document.getElementById('current-date'),
   todayTotal: document.getElementById('today-total'),
   todayTotalLabel: document.getElementById('today-total-label'),
-  todayCigarettes: document.getElementById('today-cigarettes'),
-  todayJoints: document.getElementById('today-joints'),
-  todayHalfCigarettes: document.getElementById('today-half-cigarettes'),
-  todayPuzzetta: document.getElementById('today-puzzetta'),
-  todayPuff: document.getElementById('today-puff'),
+  todayCategoryCounts: document.getElementById('today-category-counts'),
+  recordButtons: document.getElementById('record-buttons'),
+  categoryStatsGrid: document.getElementById('category-stats-grid'),
   periodLabel: document.getElementById('period-label'),
   periodTotal: document.getElementById('period-total'),
-  periodCigarettes: document.getElementById('period-cigarettes'),
-  periodJoints: document.getElementById('period-joints'),
-  periodHalfCigarettes: document.getElementById('period-half-cigarettes'),
-  periodPuzzetta: document.getElementById('period-puzzetta'),
-  periodPuff: document.getElementById('period-puff'),
   todayExpenseTotal: document.getElementById('today-expense-total'),
   todayExpenseCount: document.getElementById('today-expense-count'),
   periodExpenseTotal: document.getElementById('period-expense-total'),
+  expenseTrendChart: document.getElementById('expense-trend-chart'),
   expenseCategoryGrid: document.getElementById('expense-category-grid'),
   expenseBars: document.getElementById('expense-bars'),
   expenseView: document.getElementById('expense-view'),
@@ -82,12 +116,20 @@ const elements = {
   chartSubtitle: document.getElementById('chart-subtitle'),
   chartTotalPill: document.getElementById('chart-total-pill'),
   chartBars: document.getElementById('chart-bars'),
+  expenseTrendSubtitle: document.getElementById('expense-trend-subtitle'),
+  weeklyInsights: document.getElementById('weekly-insights'),
+  weeklyTotal: document.getElementById('weekly-total'),
+  weeklyChange: document.getElementById('weekly-change'),
+  weeklySpend: document.getElementById('weekly-spend'),
+  weeklyDailySpend: document.getElementById('weekly-daily-spend'),
+  weeklyPeakTime: document.getElementById('weekly-peak-time'),
+  weeklyPeakDay: document.getElementById('weekly-peak-day'),
   historyList: document.getElementById('history-list'),
   historyCount: document.getElementById('history-count'),
   historyFootnote: document.getElementById('history-footnote'),
-  purchaseHistoryList: document.getElementById('purchase-history-list'),
-  purchaseHistoryCount: document.getElementById('purchase-history-count'),
-  purchaseHistoryFootnote: document.getElementById('purchase-history-footnote'),
+  historyKindFilter: document.getElementById('history-kind-filter'),
+  historyRangeFilter: document.getElementById('history-range-filter'),
+  historyLoadMore: document.getElementById('history-load-more'),
   timestampDialog: document.getElementById('timestamp-dialog'),
   timestampDialogEyebrow: document.getElementById('timestamp-dialog-eyebrow'),
   timestampDialogTitle: document.getElementById('timestamp-dialog-title'),
@@ -103,8 +145,8 @@ const elements = {
   categoryDetailsList: document.getElementById('category-details-list'),
   closeCategoryDetails: document.getElementById('close-category-details'),
   purchaseDialog: document.getElementById('purchase-dialog'),
-  purchaseDialogTitle: document.getElementById('purchase-dialog-title'),
   purchaseForm: document.getElementById('purchase-form'),
+  purchaseType: document.getElementById('purchase-type'),
   purchaseAmount: document.getElementById('purchase-amount'),
   purchaseFormError: document.getElementById('purchase-form-error'),
   purchaseCancel: document.getElementById('purchase-cancel'),
@@ -122,6 +164,24 @@ const elements = {
   importFile: document.getElementById('import-file'),
   storageStatus: document.getElementById('storage-status'),
   accountStatus: document.getElementById('account-status'),
+  profileForm: document.getElementById('profile-form'),
+  profileNickname: document.getElementById('profile-nickname'),
+  profileAvatarFile: document.getElementById('profile-avatar-file'),
+  profileAvatarPreview: document.getElementById('profile-avatar-preview'),
+  removeProfileAvatar: document.getElementById('remove-profile-avatar'),
+  profileFormStatus: document.getElementById('profile-form-status'),
+  saveProfile: document.getElementById('save-profile'),
+  signupProfileFields: document.getElementById('signup-profile-fields'),
+  signupNickname: document.getElementById('signup-nickname'),
+  signupAvatarFile: document.getElementById('signup-avatar-file'),
+  signupAvatarPreview: document.getElementById('signup-avatar-preview'),
+  accountAccessButton: document.getElementById('account-access-button'),
+  accountAccessAvatar: document.getElementById('account-access-avatar'),
+  accountAccessLabel: document.getElementById('account-access-label'),
+  categoryManager: document.getElementById('category-manager'),
+  categoryForm: document.getElementById('category-form'),
+  categoryName: document.getElementById('category-name'),
+  categorySettingsStatus: document.getElementById('category-settings-status'),
   accountEmail: document.getElementById('account-email'),
   accountPassword: document.getElementById('account-password'),
   confirmPassword: document.getElementById('confirm-password'),
@@ -138,7 +198,6 @@ const elements = {
   authForm: document.getElementById('auth-form'),
   signOut: document.getElementById('sign-out'),
   signedInControls: document.getElementById('signed-in-controls'),
-  privacyLabel: document.getElementById('privacy-label'),
   footerPrivacyLabel: document.getElementById('footer-privacy-label'),
   appFrame: document.querySelector('.app-frame'),
   authGate: document.getElementById('auth-gate'),
@@ -177,24 +236,190 @@ function setAccountStatus(message, isError = false, isSuccess = false, isPending
   elements.modalAccountStatus.classList.toggle('is-pending', isPending);
 }
 
+function renderAccountAvatar(avatarUrl) {
+  elements.accountAccessAvatar.replaceChildren();
+  if (avatarUrl) {
+    const image = document.createElement('img');
+    image.src = avatarUrl;
+    image.alt = '';
+    image.referrerPolicy = 'no-referrer';
+    image.addEventListener('error', () => {
+      if (image.parentNode === elements.accountAccessAvatar) renderAccountAvatar(null);
+    }, { once: true });
+    elements.accountAccessAvatar.append(image);
+    return;
+  }
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.setAttribute('viewBox', '0 0 24 24');
+  icon.setAttribute('fill', 'none');
+  icon.setAttribute('aria-hidden', 'true');
+  const shoulders = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  shoulders.setAttribute('d', 'M19 20a7 7 0 0 0-14 0');
+  shoulders.setAttribute('stroke', 'currentColor');
+  shoulders.setAttribute('stroke-width', '1.8');
+  shoulders.setAttribute('stroke-linecap', 'round');
+  const head = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  head.setAttribute('cx', '12');
+  head.setAttribute('cy', '8');
+  head.setAttribute('r', '4');
+  head.setAttribute('stroke', 'currentColor');
+  head.setAttribute('stroke-width', '1.8');
+  icon.append(shoulders, head);
+  elements.accountAccessAvatar.append(icon);
+}
+
+function accountProfile(user) {
+  const metadata = user && user.user_metadata && typeof user.user_metadata === 'object'
+    ? user.user_metadata
+    : {};
+  const email = user && typeof user.email === 'string' ? user.email.trim() : '';
+  const nameValue = [metadata.nickname, metadata.full_name, metadata.name, metadata.display_name, metadata.preferred_username]
+    .find(value => typeof value === 'string' && value.trim());
+  const name = nameValue ? nameValue.trim() : email.split('@')[0];
+  const avatarValue = metadata.avatar_url || metadata.picture || metadata.avatarUrl;
+  let avatarUrl = null;
+  if (typeof avatarValue === 'string') {
+    try {
+      const parsedUrl = new URL(avatarValue);
+      if (parsedUrl.protocol === 'https:' && !parsedUrl.username && !parsedUrl.password) {
+        avatarUrl = parsedUrl.href;
+      }
+    } catch {
+      avatarUrl = null;
+    }
+  }
+  const avatarPath = typeof metadata.avatar_path === 'string'
+    && user && user.id
+    && metadata.avatar_path.startsWith(`${user.id}/`)
+    && !metadata.avatar_path.includes('..')
+    ? metadata.avatar_path
+    : null;
+  return { name, email, avatarUrl, avatarPath };
+}
+
+function setProfileFormStatus(message = '', isError = false, isSuccess = false, isPending = false) {
+  elements.profileFormStatus.textContent = message;
+  elements.profileFormStatus.hidden = !message;
+  elements.profileFormStatus.classList.toggle('is-error', isError);
+  elements.profileFormStatus.classList.toggle('is-success', isSuccess);
+  elements.profileFormStatus.classList.toggle('is-pending', isPending);
+}
+
+function setProfileSavePending(pending) {
+  profileSavePending = pending;
+  elements.saveProfile.disabled = pending;
+  elements.saveProfile.textContent = pending ? 'Salvataggio…' : 'Salva profilo';
+  elements.profileNickname.disabled = pending;
+  elements.profileAvatarFile.disabled = pending;
+  elements.removeProfileAvatar.disabled = pending;
+}
+
+function setProfilePreview(container, imageUrl) {
+  container.replaceChildren();
+  if (!imageUrl) {
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('fill', 'none');
+    icon.setAttribute('aria-hidden', 'true');
+    const shoulders = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    shoulders.setAttribute('d', 'M19 20a7 7 0 0 0-14 0');
+    shoulders.setAttribute('stroke', 'currentColor');
+    shoulders.setAttribute('stroke-width', '1.8');
+    shoulders.setAttribute('stroke-linecap', 'round');
+    const head = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    head.setAttribute('cx', '12');
+    head.setAttribute('cy', '8');
+    head.setAttribute('r', '4');
+    head.setAttribute('stroke', 'currentColor');
+    head.setAttribute('stroke-width', '1.8');
+    icon.append(shoulders, head);
+    container.append(icon);
+    return;
+  }
+  const image = document.createElement('img');
+  image.src = imageUrl;
+  image.alt = '';
+  image.referrerPolicy = 'no-referrer';
+  image.addEventListener('error', () => setProfilePreview(container, null), { once: true });
+  container.append(image);
+}
+
+function populateProfileSettings(user) {
+  const metadata = user && user.user_metadata && typeof user.user_metadata === 'object'
+    ? user.user_metadata
+    : {};
+  elements.profileNickname.value = [metadata.nickname, metadata.full_name, metadata.name]
+    .find(value => typeof value === 'string' && value.trim())?.trim() || '';
+  removeProfileAvatarOnSave = false;
+  profileAvatarDraft = null;
+  elements.profileAvatarFile.value = '';
+  elements.removeProfileAvatar.hidden = !accountProfile(user).avatarPath && !accountProfile(user).avatarUrl;
+  elements.removeProfileAvatar.textContent = 'Rimuovi foto';
+  if (profileAvatarPreviewUrl) URL.revokeObjectURL(profileAvatarPreviewUrl);
+  profileAvatarPreviewUrl = null;
+  setProfileFormStatus();
+  const profile = accountProfile(user);
+  const imageUrl = profile.avatarUrl
+    || (resolvedAvatarCache && resolvedAvatarCache.key === `${user.id}:${profile.avatarPath}` ? resolvedAvatarCache.url : null);
+  setProfilePreview(elements.profileAvatarPreview, imageUrl);
+}
+
+function resolveAccountAvatar(user, profile) {
+  if (!profile.avatarPath || !user || !user.id) return;
+  const key = `${user.id}:${profile.avatarPath}`;
+  if (resolvedAvatarCache && resolvedAvatarCache.key === key && resolvedAvatarCache.expiresAt > Date.now() + 60000) {
+    renderAccountAvatar(resolvedAvatarCache.url);
+    setProfilePreview(elements.profileAvatarPreview, resolvedAvatarCache.url);
+    return;
+  }
+  if (avatarResolutionKey === key && avatarResolutionPromise) return;
+  avatarResolutionKey = key;
+  avatarResolutionPromise = getSignedAvatarUrl(profile.avatarPath).then(url => {
+    if (avatarResolutionKey !== key || !isAuthenticated || !cloudSession || cloudSession.user.id !== user.id) return;
+    resolvedAvatarCache = { key, url, expiresAt: Date.now() + 55 * 60 * 1000 };
+    renderAccountAvatar(url);
+    setProfilePreview(elements.profileAvatarPreview, url);
+  }).catch(error => {
+    console.warn('Impossibile caricare la foto profilo privata.', error);
+  }).finally(() => {
+    if (avatarResolutionKey === key) {
+      avatarResolutionPromise = null;
+      if (!resolvedAvatarCache || resolvedAvatarCache.key !== key) avatarResolutionKey = '';
+    }
+  });
+}
+
 function updateAccountControls() {
-  // Il blocco dell'interfaccia e i controlli dipendono sempre dallo stato auth corrente.
+  // L'archivio locale resta utilizzabile anche senza una sessione cloud.
   const signedIn = isAuthenticated;
   const signingUp = authMode === 'signup';
-  elements.appFrame.inert = !signedIn;
-  elements.appFrame.classList.toggle('is-locked', !signedIn);
-  elements.authGate.hidden = signedIn || !hasResolvedInitialSession;
-  elements.authGateMessage.textContent = cloudConfigured
-    ? 'Accedi o crea un account per usare SmokeLog e sincronizzare il tuo storico.'
-    : 'La sincronizzazione non è ancora configurata. Completa i passaggi Supabase indicati nel README.';
-  elements.openAuthModal.disabled = !cloudConfigured;
-  elements.privacyLabel.textContent = !cloudConfigured
-    ? 'Solo sul dispositivo'
-    : signedIn ? 'Account attivo' : 'Accedi per sincronizzare';
+  const profile = accountProfile(signedIn && cloudSession ? cloudSession.user : null);
+  elements.appFrame.inert = !isAppReady;
+  elements.appFrame.classList.toggle('is-locked', !isAppReady);
+  elements.authGate.hidden = isAppReady;
+  elements.authGateMessage.textContent = 'Caricamento del tuo archivio locale…';
+  elements.accountAccessButton.disabled = !cloudConfigured;
+  elements.accountAccessLabel.textContent = signedIn ? (profile.name || 'Account') : cloudConfigured ? 'Accedi' : 'Solo locale';
+  renderAccountAvatar(signedIn ? profile.avatarUrl : null);
+  if (signedIn && profile.avatarPath) resolveAccountAvatar(cloudSession.user, profile);
+  elements.accountAccessButton.setAttribute(
+    'aria-label',
+    signedIn ? `Apri account${profile.name ? ` di ${profile.name}` : ''}` : cloudConfigured ? 'Accedi al tuo account' : 'Sincronizzazione solo locale'
+  );
+  elements.accountAccessButton.title = signedIn
+    ? [profile.name, profile.email].filter(Boolean).join(' · ')
+    : cloudConfigured ? 'Accedi o crea un account per sincronizzare' : 'Archivio salvato su questo dispositivo';
   elements.footerPrivacyLabel.textContent = cloudConfigured
-    ? 'Account personale · Nessun analytics'
+    ? signedIn ? 'Account connesso · Nessun analytics' : 'Solo su questo dispositivo · Nessun analytics'
     : 'Solo sul dispositivo · Nessun analytics';
   elements.signedInControls.hidden = !signedIn;
+  document.getElementById('delete-account').hidden = !signedIn || !supabaseConfig.accountDeletionEnabled;
+  if (supabaseConfig.accountDeletionEnabled) document.getElementById('delete-account-help').textContent = 'Rimuove definitivamente account, storico, categorie e foto dal servizio attivo. Esporta prima un backup se vuoi conservarlo.';
+  elements.signupProfileFields.hidden = !signingUp || signedIn || isPasswordRecovery;
+  elements.signupNickname.required = signingUp && !signedIn && !isPasswordRecovery;
+  elements.signupNickname.disabled = authRequestPending;
+  elements.signupAvatarFile.disabled = authRequestPending;
+  elements.saveProfile.disabled = authRequestPending || profileSavePending;
   elements.signOut.hidden = !signedIn || isPasswordRecovery;
   elements.signIn.hidden = signedIn || isPasswordRecovery || signingUp;
   elements.signUp.hidden = signedIn || isPasswordRecovery || signingUp;
@@ -213,7 +438,7 @@ function updateAccountControls() {
     ? 'Scegli una password nuova per il tuo account.'
     : signingUp
       ? 'Inserisci email e password per creare il tuo account.'
-      : 'Lo storico è privato e sincronizzato sul tuo account.';
+      : 'Collega l’account per sincronizzare i dati locali tra i tuoi dispositivi.';
   elements.signUp.textContent = signingUp ? 'Registrati' : 'Crea account';
   elements.saveNewPassword.hidden = !isPasswordRecovery;
   elements.signIn.disabled = authRequestPending;
@@ -225,14 +450,6 @@ function updateAccountControls() {
   elements.accountEmail.disabled = isPasswordRecovery;
   elements.accountPassword.disabled = signedIn && !isPasswordRecovery;
   elements.accountPassword.autocomplete = isPasswordRecovery ? 'new-password' : 'current-password';
-  document.getElementById('add-cigarette').disabled = !signedIn;
-  document.getElementById('add-joint').disabled = !signedIn;
-  document.getElementById('add-half-cigarette').disabled = !signedIn;
-  document.getElementById('add-puzzetta').disabled = !signedIn;
-  document.getElementById('add-puff').disabled = !signedIn;
-  document.querySelectorAll('[data-purchase-type]').forEach(button => {
-    button.disabled = !signedIn;
-  });
 }
 
 function openAuthenticationModal() {
@@ -288,6 +505,8 @@ function setAuthRequestPending(pending, action = '') {
   elements.recoverPassword.disabled = pending;
   elements.resendConfirmation.disabled = pending;
   elements.saveNewPassword.disabled = pending;
+  elements.signupNickname.disabled = pending;
+  elements.signupAvatarFile.disabled = pending;
   elements.signIn.textContent = pending && action === 'signin' ? 'Accesso in corso…' : 'Accedi';
   elements.registerAccount.textContent = pending && action === 'signup' ? 'Invio richiesta…' : 'Registrati';
   elements.resendConfirmation.textContent = pending && action === 'resend'
@@ -335,6 +554,206 @@ async function supabaseAuthRequest(path, body, accessToken, query = {}) {
     throw error;
   }
   return result;
+}
+
+async function authenticatedStorageRequest(path, options = {}, retry = true) {
+  const session = cloudSession;
+  if (!session || !session.access_token) throw new Error('Accedi per gestire la foto profilo.');
+  const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/storage/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: supabaseConfig.anonKey,
+      Authorization: 'Bearer ' + session.access_token,
+      ...(options.headers || {})
+    }
+  });
+  if (response.status === 401 && retry && session.refresh_token) {
+    const refreshed = await refreshCloudSession(session.refresh_token);
+    saveCloudSession(refreshed);
+    return authenticatedStorageRequest(path, options, false);
+  }
+  const responseText = await response.text();
+  let result = null;
+  if (responseText) {
+    try {
+      result = JSON.parse(responseText);
+    } catch {
+      if (!response.ok) throw new Error(`Storage Supabase non disponibile (HTTP ${response.status}).`);
+    }
+  }
+  if (!response.ok) {
+    if (response.status === 404 || (result && ['Bucket not found', 'No such bucket'].includes(result.message))) {
+      throw new Error('Lo storage delle foto non è configurato. Esegui lo script supabase-schema.sql aggiornato.');
+    }
+    throw new Error((result && (result.message || result.error || result.msg)) || `Operazione sulla foto non riuscita (HTTP ${response.status}).`);
+  }
+  return result;
+}
+
+async function getSignedAvatarUrl(avatarPath) {
+  const encodedPath = avatarPath.split('/').map(encodeURIComponent).join('/');
+  const result = await authenticatedStorageRequest(`object/sign/${AVATAR_BUCKET}/${encodedPath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresIn: 3600 })
+  });
+  if (!result || typeof result.signedURL !== 'string') {
+    throw new Error('Supabase non ha restituito un collegamento valido per la foto profilo.');
+  }
+  if (/^https:\/\//i.test(result.signedURL)) return result.signedURL;
+  const baseUrl = supabaseConfig.url.replace(/\/$/, '');
+  const signedPath = result.signedURL.startsWith('/')
+    ? result.signedURL
+    : `/${result.signedURL}`;
+  return `${baseUrl}/storage/v1${signedPath}`;
+}
+
+async function resizeProfileImage(file) {
+  const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+  if (!file || !allowedTypes.has(file.type)) {
+    throw new Error('Scegli un’immagine JPG, PNG o WebP.');
+  }
+  if (file.size > 10 * 1024 * 1024) throw new Error('La foto deve essere più piccola di 10 MB.');
+  if (typeof createImageBitmap !== 'function') throw new Error('Questo browser non supporta il ridimensionamento delle immagini.');
+  const bitmap = await createImageBitmap(file);
+  try {
+    if (bitmap.width * bitmap.height > 24000000) throw new Error('La risoluzione dell’immagine è troppo alta.');
+    const size = 320;
+    const scale = Math.max(size / bitmap.width, size / bitmap.height);
+    const sourceWidth = size / scale;
+    const sourceHeight = size / scale;
+    const sourceX = (bitmap.width - sourceWidth) / 2;
+    const sourceY = (bitmap.height - sourceHeight) / 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) throw new Error('Impossibile elaborare la foto selezionata.');
+    context.drawImage(bitmap, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, size, size);
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(result => {
+        if (result) resolve(result);
+        else reject(new Error('Impossibile convertire la foto selezionata.'));
+      }, 'image/jpeg', 0.82);
+    });
+    if (blob.size > 300 * 1024) throw new Error('La foto elaborata supera il limite di 300 KB. Scegli un’altra immagine.');
+    return blob;
+  } finally {
+    bitmap.close();
+  }
+}
+
+function normalizeProfileEmail(email) {
+  return typeof email === 'string' ? email.trim().toLocaleLowerCase('en-US') : '';
+}
+
+async function saveProfileDraft(email, blob) {
+  const normalizedEmail = normalizeProfileEmail(email);
+  if (!normalizedEmail) throw new Error('Inserisci un indirizzo email valido prima di scegliere la foto.');
+  const tx = await createDatabaseTransaction('readwrite', PROFILE_DRAFT_STORE_NAME);
+  const done = transactionDone(tx);
+  tx.objectStore(PROFILE_DRAFT_STORE_NAME).put({ email: normalizedEmail, blob, savedAt: Date.now() });
+  await done;
+}
+
+async function readProfileDraft(email) {
+  const normalizedEmail = normalizeProfileEmail(email);
+  if (!normalizedEmail) return null;
+  const tx = await createDatabaseTransaction('readonly', PROFILE_DRAFT_STORE_NAME);
+  const done = transactionDone(tx);
+  const request = tx.objectStore(PROFILE_DRAFT_STORE_NAME).get(normalizedEmail);
+  const draft = await new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error || new Error('Impossibile leggere la foto in attesa.'));
+  });
+  await done;
+  return draft;
+}
+
+async function deleteProfileDraft(email) {
+  const normalizedEmail = normalizeProfileEmail(email);
+  if (!normalizedEmail) return;
+  const tx = await createDatabaseTransaction('readwrite', PROFILE_DRAFT_STORE_NAME);
+  const done = transactionDone(tx);
+  tx.objectStore(PROFILE_DRAFT_STORE_NAME).delete(normalizedEmail);
+  await done;
+}
+
+async function uploadProfileAvatar(blob, userId) {
+  const avatarPath = `${userId}/${makeId()}.jpg`;
+  const encodedPath = avatarPath.split('/').map(encodeURIComponent).join('/');
+  await authenticatedStorageRequest(`object/${AVATAR_BUCKET}/${encodedPath}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'image/jpeg',
+      'x-upsert': 'true'
+    },
+    body: blob
+  });
+  return avatarPath;
+}
+
+async function updateAuthenticatedUserMetadata(metadata) {
+  if (!cloudSession || !cloudSession.access_token) throw new Error('Accedi di nuovo per modificare il profilo.');
+  const sendUpdate = async retry => {
+    const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/auth/v1/user`, {
+      method: 'PUT',
+      headers: {
+        apikey: supabaseConfig.anonKey,
+        Authorization: 'Bearer ' + cloudSession.access_token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ data: metadata })
+    });
+    if (response.status === 401 && retry && cloudSession.refresh_token) {
+      const refreshed = await refreshCloudSession(cloudSession.refresh_token);
+      saveCloudSession(refreshed);
+      return sendUpdate(false);
+    }
+    const responseText = await response.text();
+    let result = null;
+    if (responseText) {
+      try {
+        result = JSON.parse(responseText);
+      } catch {
+        throw new Error(`Risposta del profilo non valida (HTTP ${response.status}).`);
+      }
+    }
+    if (!response.ok) {
+      throw new Error((result && (result.msg || result.message || result.error_description)) || `Aggiornamento del profilo non riuscito (HTTP ${response.status}).`);
+    }
+    return result;
+  };
+  const user = await sendUpdate(true);
+  if (!user || !user.id) throw new Error('Supabase non ha restituito il profilo aggiornato.');
+  cloudSession.user = user;
+  saveCloudSession(cloudSession);
+  return user;
+}
+
+async function removeStoredAvatar(avatarPath) {
+  if (!avatarPath) return;
+  await authenticatedStorageRequest(`object/${AVATAR_BUCKET}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefixes: [avatarPath] })
+  });
+}
+
+async function completePendingProfileSetup(user) {
+  if (!user || !user.email || !user.id) return false;
+  const draft = await readProfileDraft(user.email);
+  if (!draft || !(draft.blob instanceof Blob)) return false;
+  const avatarPath = await uploadProfileAvatar(draft.blob, user.id);
+  const metadata = { ...(user.user_metadata || {}), nickname: accountProfile(user).name, avatar_path: avatarPath };
+  delete metadata.avatar_url;
+  delete metadata.picture;
+  const updatedUser = await updateAuthenticatedUserMetadata(metadata);
+  await deleteProfileDraft(user.email);
+  resolvedAvatarCache = null;
+  populateProfileSettings(updatedUser);
+  updateAccountControls();
+  return true;
 }
 
 function isInvalidRefreshTokenError(error) {
@@ -385,61 +804,35 @@ async function supabaseRequest(path, options = {}, retry = true) {
     }
   }
   if (!response.ok) {
-    const schemaErrorCodes = new Set(['PGRST202', 'PGRST205', '42P01', '42883']);
-    if ((path.includes('smokelog_purchases') || path.includes('replace_smokelog_data'))
+    const schemaErrorCodes = new Set(['PGRST202', 'PGRST204', 'PGRST205', '42P01', '42883']);
+    if ((path.includes('smokelog_events') || path.includes('smokelog_purchases') || path.includes('smokelog_categories') || path.includes('merge_smokelog_data'))
       && result && schemaErrorCodes.has(result.code)) {
-      throw new Error('Lo schema Supabase per gli acquisti non è aggiornato. Esegui il file supabase-schema.sql nel SQL Editor del progetto, poi riprova.');
+      throw new Error('Lo schema Supabase non è aggiornato. Esegui il file supabase-schema.sql nel SQL Editor del progetto, poi riprova.');
     }
-    throw new Error((result && (result.message || result.details || result.hint)) || `Operazione cloud non riuscita (HTTP ${response.status}).`);
+    const error = new Error((result && (result.message || result.details || result.hint)) || `Operazione cloud non riuscita (HTTP ${response.status}).`);
+    error.code = result && result.code;
+    throw error;
   }
   return result;
-}
-
-async function uploadCloudEvents(source) {
-  // Suddivide gli invii per restare entro la dimensione gestibile dalle richieste REST.
-  for (let start = 0; start < source.length; start += CLOUD_BATCH_SIZE) {
-    const rows = source.slice(start, start + CLOUD_BATCH_SIZE).map(event => ({
-      id: event.id,
-      user_id: cloudSession.user.id,
-      type: event.type,
-      timestamp: event.timestamp
-    }));
-    await supabaseRequest('smokelog_events?on_conflict=id', {
-      method: 'POST',
-      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify(rows)
-    });
-  }
-}
-
-async function uploadCloudPurchases(source) {
-  for (let start = 0; start < source.length; start += CLOUD_BATCH_SIZE) {
-    const rows = source.slice(start, start + CLOUD_BATCH_SIZE).map(purchase => ({
-      id: purchase.id,
-      user_id: cloudSession.user.id,
-      type: purchase.type,
-      amount: purchase.amountCents / 100,
-      timestamp: purchase.timestamp
-    }));
-    await supabaseRequest('smokelog_purchases?on_conflict=id', {
-      method: 'POST',
-      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify(rows)
-    });
-  }
 }
 
 async function fetchCloudEvents() {
   const eventsFromCloud = [];
   // Legge tutte le pagine: una singola risposta potrebbe non contenere l'intero storico.
   for (let start = 0; ; start += CLOUD_BATCH_SIZE) {
-    const rows = await supabaseRequest('smokelog_events?select=id,type,timestamp&order=timestamp.asc', {
+    const rows = await supabaseRequest('smokelog_events?select=id,type,timestamp,updated_at,deleted_at&order=timestamp.asc', {
       headers: {
         Range: `${start}-${start + CLOUD_BATCH_SIZE - 1}`,
         'Range-Unit': 'items'
       }
     });
-    eventsFromCloud.push(...rows.map(row => ({ id: row.id, type: row.type, timestamp: row.timestamp })));
+    eventsFromCloud.push(...rows.map(row => ({
+      id: row.id,
+      type: row.type,
+      timestamp: row.timestamp,
+      updatedAt: row.updated_at || row.timestamp,
+      deletedAt: row.deleted_at || null
+    })));
     if (rows.length < CLOUD_BATCH_SIZE) break;
   }
   return eventsFromCloud;
@@ -448,7 +841,7 @@ async function fetchCloudEvents() {
 async function fetchCloudPurchases() {
   const purchasesFromCloud = [];
   for (let start = 0; ; start += CLOUD_BATCH_SIZE) {
-    const rows = await supabaseRequest('smokelog_purchases?select=id,type,amount,timestamp&order=timestamp.asc', {
+    const rows = await supabaseRequest('smokelog_purchases?select=id,type,amount,timestamp,updated_at,deleted_at&order=timestamp.asc', {
       headers: {
         Range: `${start}-${start + CLOUD_BATCH_SIZE - 1}`,
         'Range-Unit': 'items'
@@ -458,23 +851,206 @@ async function fetchCloudPurchases() {
       id: row.id,
       type: row.type,
       amountCents: Math.round(Number(row.amount) * 100),
-      timestamp: row.timestamp
+      timestamp: row.timestamp,
+      updatedAt: row.updated_at || row.timestamp,
+      deletedAt: row.deleted_at || null
     })));
     if (rows.length < CLOUD_BATCH_SIZE) break;
   }
   return purchasesFromCloud;
 }
 
+async function fetchCloudCategories() {
+  const categoriesFromCloud = [];
+  for (let start = 0; ; start += CLOUD_BATCH_SIZE) {
+    const rows = await supabaseRequest('smokelog_categories?select=id,name,color,position,is_active,updated_at,deleted_at&order=position.asc', {
+      headers: {
+        Range: `${start}-${start + CLOUD_BATCH_SIZE - 1}`,
+        'Range-Unit': 'items'
+      }
+    });
+    categoriesFromCloud.push(...rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      color: row.color,
+      position: row.position,
+      isActive: row.is_active,
+      updatedAt: row.updated_at,
+      deletedAt: row.deleted_at || null
+    })));
+    if (rows.length < CLOUD_BATCH_SIZE) break;
+  }
+  return categoriesFromCloud;
+}
+
+function mergeById(...sources) {
+  const records = new Map();
+  for (const source of sources) {
+    for (const record of source) {
+      const existing = records.get(record.id);
+      const currentTime = Date.parse(record.updatedAt || record.timestamp) || 0;
+      const existingTime = existing ? Date.parse(existing.updatedAt || existing.timestamp) || 0 : -1;
+      if (!existing || currentTime >= existingTime) records.set(record.id, record);
+    }
+  }
+  return [...records.values()];
+}
+
+async function readCloudSnapshot(userId) {
+  const tx = await createDatabaseTransaction('readonly', SYNC_STORE_NAME);
+  const done = transactionDone(tx);
+  const request = tx.objectStore(SYNC_STORE_NAME).get(userId);
+  let cached;
+  request.onsuccess = () => { cached = request.result; };
+  await done;
+  return cached || { ownerId: userId, cursor: '0', events: [], purchases: [], categories: [] };
+}
+
+async function fetchCloudSnapshot(userId, cached = null) {
+  const snapshot = cached || await readCloudSnapshot(userId);
+  // Old deployments continue to work until the incremental SQL migration is run.
+  try {
+    let more = true;
+    while (more) {
+      const page = await supabaseRequest('rpc/smokelog_changes', {
+        method: 'POST', body: JSON.stringify({ p_after: snapshot.cursor, p_limit: CLOUD_BATCH_SIZE })
+      });
+      for (const kind of ['events', 'purchases', 'categories']) {
+        const byId = new Map(snapshot[kind].map(record => [record.id, record]));
+        for (const change of page.changes.filter(change => change.kind === kind)) {
+          const row = change.record;
+          const record = { id: row.id, updatedAt: row.updated_at, deletedAt: row.deleted_at || null };
+          if (kind === 'categories') Object.assign(record, { name: row.name, color: row.color, position: row.position, isActive: row.is_active });
+          else Object.assign(record, { type: row.type, timestamp: row.timestamp });
+          if (kind === 'purchases') record.amountCents = Math.round(Number(row.amount) * 100);
+          byId.set(record.id, record);
+        }
+        snapshot[kind] = [...byId.values()];
+      }
+      if (page.has_more && page.cursor === snapshot.cursor) throw new Error('Il cursore della sincronizzazione non avanza.');
+      snapshot.cursor = page.cursor;
+      more = page.has_more;
+    }
+    return snapshot;
+  } catch (error) {
+    if (!['PGRST202', '42883'].includes(error.code)) throw error;
+    const [events, purchases, categories] = await Promise.all([fetchCloudEvents(), fetchCloudPurchases(), fetchCloudCategories()]);
+    return { ownerId: userId, cursor: '0', events, purchases, categories };
+  }
+}
+
+function mergeCategoriesById(localCategories, remoteCategories) {
+  const merged = new Map(mergeById(localCategories, remoteCategories).map(category => [category.id, category]));
+  // Una modifica locale non ancora confermata dal cloud deve prevalere anche
+  // se l'altro dispositivo ha un updated_at più recente o l'orologio locale
+  // non è perfettamente sincronizzato.
+  for (const category of localCategories) {
+    if (category.pendingSync) {
+      const remote = remoteCategories.find(item => item.id === category.id);
+      const updatedAt = new Date(Math.max(
+        Date.parse(category.updatedAt) || 0,
+        (remote ? Date.parse(remote.updatedAt) || 0 : 0) + (categoryStateMatches(category, remote) ? 0 : 1)
+      )).toISOString();
+      merged.set(category.id, { ...category, updatedAt });
+    }
+  }
+  return [...merged.values()];
+}
+
+function categoryStateMatches(first, second) {
+  return Boolean(second) && first.name === second.name && first.color === second.color
+    && first.position === second.position && first.isActive === second.isActive
+    && (first.deletedAt || null) === (second.deletedAt || null);
+}
+
+function isUntouchedDefaultCategory(category) {
+  const index = DEFAULT_EVENT_CATEGORIES.findIndex(item => item.id === category.id);
+  return index >= 0 && !category.pendingSync && categoryStateMatches(category, {
+    ...DEFAULT_EVENT_CATEGORIES[index], position: index, isActive: true
+  });
+}
+
+function withCloudIds(records) {
+  const now = new Date().toISOString();
+  return records.map(record => {
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.id)) return record;
+    return { ...record, id: makeId(), updatedAt: now };
+  });
+}
+
+function markLocalMutation() {
+  localMutationVersion += 1;
+}
+
+async function uploadCloudData(nextEvents, nextPurchases, nextCategories) {
+  const batchCount = Math.ceil(Math.max(nextEvents.length, nextPurchases.length, nextCategories.length) / CLOUD_BATCH_SIZE);
+  for (let batch = 0; batch < batchCount; batch += 1) {
+    const start = batch * CLOUD_BATCH_SIZE;
+    await supabaseRequest('rpc/merge_smokelog_data', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_events: nextEvents.slice(start, start + CLOUD_BATCH_SIZE).map(event => ({
+          id: event.id,
+          type: event.type,
+          timestamp: event.timestamp,
+          updated_at: event.updatedAt || event.timestamp,
+          deleted_at: event.deletedAt || null
+        })),
+        p_purchases: nextPurchases.slice(start, start + CLOUD_BATCH_SIZE).map(purchase => ({
+          id: purchase.id,
+          type: purchase.type,
+          amount: purchase.amountCents / 100,
+          timestamp: purchase.timestamp,
+          updated_at: purchase.updatedAt || purchase.timestamp,
+          deleted_at: purchase.deletedAt || null
+        })),
+        p_categories: nextCategories.slice(start, start + CLOUD_BATCH_SIZE).map(category => ({
+          id: category.id,
+          name: category.name,
+          color: category.color,
+          position: category.position,
+          is_active: Boolean(category.isActive),
+          updated_at: category.updatedAt,
+          deleted_at: category.deletedAt || null
+        }))
+      })
+    });
+  }
+}
+
 function syncCloudEvents() {
-  // Accorpa le sincronizzazioni concorrenti per evitare letture/scritture duplicate.
-  if (cloudSyncPromise) return cloudSyncPromise;
-  cloudSyncPromise = performCloudSync().finally(() => {
+  // Accorpa le sincronizzazioni concorrenti, ma programma un altro passaggio
+  // se nel frattempo l'utente ha modificato lo storico locale.
+  if (cloudSyncPromise) {
+    cloudSyncNeedsAnotherPass = true;
+    return cloudSyncPromise;
+  }
+  cloudSyncPromise = (async () => {
+    do {
+      cloudSyncNeedsAnotherPass = false;
+      const syncVersion = localMutationVersion;
+      await performCloudSync(syncVersion);
+      if (localMutationVersion !== syncVersion) cloudSyncNeedsAnotherPass = true;
+    } while (cloudSyncNeedsAnotherPass);
+  })().finally(() => {
     cloudSyncPromise = null;
   });
   return cloudSyncPromise;
 }
 
-async function performCloudSync() {
+function requestCloudSync() {
+  if (!cloudConfigured || !cloudSession || !cloudSession.user || !cloudSession.user.id) return;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => {
+    void syncCloudEvents().catch(error => {
+      console.error(error);
+      const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
+      setAccountStatus(`Salvato sul dispositivo. Sincronizzazione in attesa.${detail}`, false, false, true);
+    });
+  }, 250);
+}
+
+async function performCloudSync(syncVersion) {
   if (!cloudSession || !cloudSession.user || !cloudSession.user.id) {
     throw new Error('La sessione non contiene un account valido. Accedi di nuovo.');
   }
@@ -484,58 +1060,98 @@ async function performCloudSync() {
       throw new Error('La sessione è terminata durante la sincronizzazione. Accedi di nuovo.');
     }
   };
-  // La copia locale viene caricata solo al primo collegamento; gli accessi successivi seguono il cloud.
-  const localEvents = (await readAllEvents()).map(event => {
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.id)) return event;
-    return { ...event, id: makeId() };
-  });
-  const localPurchases = (await readAllPurchases()).map(purchase => {
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(purchase.id)) return purchase;
-    return { ...purchase, id: makeId() };
-  });
+  const [accountEvents, guestEvents, accountPurchases, guestPurchases, accountCategories, guestCategories] = await Promise.all([
+    readAllEvents(userId, true),
+    readAllEvents(GUEST_OWNER_ID, true),
+    readAllPurchases(userId, true),
+    readAllPurchases(GUEST_OWNER_ID, true),
+    readAllCategories(userId, true),
+    readAllCategories(GUEST_OWNER_ID, true)
+  ]);
   ensureSessionActive();
-  const remoteEvents = await fetchCloudEvents();
-  const remotePurchases = await fetchCloudPurchases();
+  const remoteSnapshot = await fetchCloudSnapshot(userId);
+  const { events: remoteEvents, purchases: remotePurchases, categories: remoteCategories } = remoteSnapshot;
   ensureSessionActive();
-  const previousUserId = localStorage.getItem(LAST_SYNC_USER_KEY);
-  if (previousUserId && previousUserId !== userId && (localEvents.length > 0 || localPurchases.length > 0)) {
-    // Evita di associare per errore allo stesso account dati locali appartenenti a un altro utente.
-    const approved = await openActionDialog({
-      title: 'Cambiare account?',
-      message: 'Questo dispositivo contiene dati sincronizzati con un altro account. Accedendo, consumi e spese locali verranno sostituiti con quelli del nuovo account. Esporta prima un backup JSON se vuoi conservarli.',
-      confirmLabel: 'Cambia account',
-      danger: true
-    });
-    if (!approved) {
-      clearCloudSession();
-      throw new Error('Accesso annullato: lo storico locale è rimasto invariato.');
-    }
+  const timestamp = new Date().toISOString();
+  const defaults = DEFAULT_EVENT_CATEGORIES.map((category, index) => ({
+    ...category,
+    position: index,
+    isActive: true,
+    updatedAt: timestamp,
+    deletedAt: null
+  }));
+  const localEvents = withCloudIds([...accountEvents, ...guestEvents]);
+  const localPurchases = withCloudIds([...accountPurchases, ...guestPurchases]);
+  // I default guest ricreati all'avvio non sono modifiche dell'utente.
+  const localCategories = [...accountCategories, ...guestCategories.filter(category => !isUntouchedDefaultCategory(category))];
+  const nextEvents = mergeById(localEvents, remoteEvents);
+  const nextPurchases = mergeById(localPurchases, remotePurchases);
+  const mergedCategoriesBeforeDefaults = mergeCategoriesById(localCategories, remoteCategories);
+  const knownCategoryIds = new Set(mergedCategoriesBeforeDefaults.map(category => category.id));
+  const nextCategories = [...mergedCategoriesBeforeDefaults, ...defaults.filter(category => !knownCategoryIds.has(category.id))]
+    .filter(category => !category.deletedAt);
+  await uploadCloudData(
+    recordsNeedingUpload(nextEvents, remoteEvents),
+    recordsNeedingUpload(nextPurchases, remotePurchases),
+    recordsNeedingUpload(nextCategories, remoteCategories)
+  );
+  ensureSessionActive();
+  const finalSnapshot = await fetchCloudSnapshot(userId, remoteSnapshot);
+  const { events: finalEvents, purchases: finalPurchases, categories: finalCategories } = finalSnapshot;
+  const mergedEvents = mergeById(nextEvents, finalEvents);
+  const mergedPurchases = mergeById(nextPurchases, finalPurchases);
+  const mergedCategories = mergeCategoriesById(nextCategories, finalCategories);
+
+  // Rileggiamo l'archivio locale subito prima del commit. Se una registrazione
+  // è stata aggiunta, modificata o rimossa durante il giro cloud, la includiamo
+  // nella fotografia finale e lasciamo che il passaggio successivo la invii.
+  const [latestAccountEvents, latestGuestEvents, latestAccountPurchases, latestGuestPurchases, latestAccountCategories, latestGuestCategories] = await Promise.all([
+    readAllEvents(userId, true),
+    readAllEvents(GUEST_OWNER_ID, true),
+    readAllPurchases(userId, true),
+    readAllPurchases(GUEST_OWNER_ID, true),
+    readAllCategories(userId, true),
+    readAllCategories(GUEST_OWNER_ID, true)
+  ]);
+  if (localMutationVersion !== syncVersion) {
+    cloudSyncNeedsAnotherPass = true;
+    return;
   }
 
-  let nextEvents = remoteEvents;
-  let nextPurchases = remotePurchases;
-  if (!previousUserId && localEvents.length > 0) {
-    const byId = new Map(remoteEvents.map(event => [event.id, event]));
-    for (const event of localEvents) byId.set(event.id, event);
-    nextEvents = [...byId.values()];
-    await uploadCloudEvents(localEvents);
-    ensureSessionActive();
-  }
-  if (!previousUserId && localPurchases.length > 0) {
-    const byId = new Map(remotePurchases.map(purchase => [purchase.id, purchase]));
-    for (const purchase of localPurchases) byId.set(purchase.id, purchase);
-    nextPurchases = [...byId.values()];
-    await uploadCloudPurchases(localPurchases);
-    ensureSessionActive();
-  }
-  await replaceAllEvents(nextEvents);
-  await replaceAllPurchases(nextPurchases);
+  const latestLocalEvents = withCloudIds([...latestAccountEvents, ...latestGuestEvents]);
+  const latestLocalPurchases = withCloudIds([...latestAccountPurchases, ...latestGuestPurchases]);
+  const latestLocalCategories = [...latestAccountCategories, ...latestGuestCategories.filter(category => !isUntouchedDefaultCategory(category))];
+  const committedEvents = mergeById(mergedEvents, latestLocalEvents);
+  const committedPurchases = mergeById(mergedPurchases, latestLocalPurchases);
+  const committedCategories = mergeCategoriesById(mergedCategories, latestLocalCategories);
+  const syncedCategories = committedCategories.map(category => ({
+    ...category,
+    pendingSync: !categoryStateMatches(category, finalCategories.find(item => item.id === category.id))
+  }));
+
   ensureSessionActive();
-  events = [...nextEvents].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  purchases = [...nextPurchases].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const committed = await commitArchive(userId,
+    [committedEvents, committedPurchases, syncedCategories],
+    [latestAccountEvents, latestAccountPurchases, latestAccountCategories],
+    [latestGuestEvents, latestGuestPurchases, latestGuestCategories], finalSnapshot);
+  if (localMutationVersion === syncVersion) {
+    // Elimina il fallback solo se il cloud ha davvero restituito lo stesso
+    // stato. Se Supabase conserva ancora il valore precedente, la preferenza
+    // locale resta pending e protegge il pulsante al prossimo caricamento.
+    clearCategoryPreferences(userId, finalCategories);
+    clearCategoryPreferences(GUEST_OWNER_ID, finalCategories);
+  }
+  if (localMutationVersion !== syncVersion) cloudSyncNeedsAnotherPass = true;
+  ensureSessionActive();
+  activeOwnerId = userId;
+  events = committed[0].filter(event => !event.deletedAt).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  purchases = committed[1].filter(purchase => !purchase.deletedAt).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  categories = committed[2].filter(category => !category.deletedAt).sort((a, b) => a.position - b.position);
   render();
   localStorage.setItem(LAST_SYNC_USER_KEY, userId);
   isAuthenticated = true;
+  isAppReady = true;
+  populateProfileSettings(cloudSession.user);
   updateAccountControls();
   closeAuthenticationModal();
   setAccountStatus(`Sincronizzato con l’account ${cloudSession.user.email}.`);
@@ -558,6 +1174,14 @@ async function handleSignIn() {
     } catch (error) {
       throw new Error(`Accesso effettuato, ma sincronizzazione non riuscita: ${error.message || 'controlla la connessione e la configurazione del database.'}`);
     }
+    try {
+      if (await completePendingProfileSetup(cloudSession.user)) {
+        setAccountStatus('Accesso effettuato. Foto profilo applicata.');
+      }
+    } catch (error) {
+      console.error(error);
+      setAccountStatus(`Accesso riuscito, ma la foto profilo in attesa non è stata caricata: ${error.message || 'riprova dalle impostazioni account.'}`, true);
+    }
     elements.accountPassword.value = '';
     awaitingEmailConfirmation = false;
   } catch (error) {
@@ -572,51 +1196,149 @@ async function handleSignIn() {
 
 async function handleSignUp() {
   if (authRequestPending || authMode !== 'signup') return;
+  const nickname = elements.signupNickname.value.trim();
+  elements.signupNickname.setCustomValidity(nickname ? '' : 'Inserisci il nickname da mostrare nel profilo.');
   elements.confirmPassword.setCustomValidity(
     elements.confirmPassword.value === elements.accountPassword.value ? '' : 'Le password non corrispondono.'
   );
   if (!elements.accountEmail.reportValidity()
     || !elements.accountPassword.reportValidity()
+    || !elements.signupNickname.reportValidity()
     || !elements.confirmPassword.reportValidity()) return;
   setAuthRequestPending(true, 'signup');
+  const email = elements.accountEmail.value.trim();
+  const hasSignupAvatar = Boolean(elements.signupAvatarFile.files && elements.signupAvatarFile.files[0]);
+  let signupAccepted = false;
   try {
+    if (hasSignupAvatar) {
+      signupAvatarDraft = await resizeProfileImage(elements.signupAvatarFile.files[0]);
+      await saveProfileDraft(email, signupAvatarDraft);
+    }
     // Con la conferma email attiva Supabase crea l'utente senza restituire una sessione.
     const result = await supabaseAuthRequest('signup', {
-      email: elements.accountEmail.value.trim(),
-      password: elements.accountPassword.value
+      email,
+      password: elements.accountPassword.value,
+      data: { nickname, full_name: nickname }
     }, null, { redirect_to: new URL('./', location.href).href });
     if (result.access_token) {
       if (!result.refresh_token || !result.user || !result.user.id) {
         throw new Error('Supabase non ha restituito una sessione valida per il nuovo account.');
       }
+      signupAccepted = true;
       awaitingEmailConfirmation = false;
       saveCloudSession(result);
       elements.accountPassword.value = '';
       elements.confirmPassword.value = '';
+      elements.signupNickname.value = '';
+      elements.signupAvatarFile.value = '';
+      if (signupAvatarPreviewUrl) URL.revokeObjectURL(signupAvatarPreviewUrl);
+      signupAvatarPreviewUrl = null;
+      signupAvatarDraft = null;
       try {
         await syncCloudEvents();
       } catch (error) {
         throw new Error(`Account creato e accesso effettuato, ma sincronizzazione non riuscita: ${error.message || 'controlla la connessione e la configurazione del database.'}`);
+      }
+      try {
+        if (await completePendingProfileSetup(cloudSession.user)) {
+          setAccountStatus(`Account creato. Profilo di ${nickname} e foto salvati.`);
+        }
+      } catch (error) {
+        console.error(error);
+        setAccountStatus(`Account creato, ma la foto profilo non è stata caricata: ${error.message || 'riprova dalle impostazioni account.'}`, true);
       }
       return;
     }
     if (!result.user || !result.user.id) {
       throw new Error('Supabase non ha confermato la creazione dell’account. Riprova e controlla Authentication → Logs nel progetto.');
     }
+    signupAccepted = true;
     awaitingEmailConfirmation = true;
+    authMode = 'signin';
     updateAccountControls();
     elements.accountPassword.value = '';
     elements.confirmPassword.value = '';
+    elements.signupNickname.value = '';
+    elements.signupAvatarFile.value = '';
+    if (signupAvatarPreviewUrl) URL.revokeObjectURL(signupAvatarPreviewUrl);
+    signupAvatarPreviewUrl = null;
+    signupAvatarDraft = null;
     if (result.user && Array.isArray(result.user.identities) && result.user.identities.length === 0) {
+      await deleteProfileDraft(email);
       setAccountStatus('Questo indirizzo risulta già registrato: ripetere la registrazione non invia necessariamente una nuova email. Se l’account non è ancora confermato, usa il pulsante qui sotto per richiedere un nuovo messaggio. Se è già confermato, torna all’accesso.', false, true);
       return;
     }
-    setAccountStatus('Supabase ha accettato la registrazione. Questo non conferma che l’email sia stata consegnata: controlla posta in arrivo e spam. Se non arriva, verifica Authentication → Users e Authentication → Logs; il mittente di prova Supabase è limitato e per altri destinatari serve SMTP personalizzato.', false, true);
+    setAccountStatus(`Profilo di ${nickname} salvato. Supabase ha accettato la registrazione; questo non garantisce che l’email sia stata consegnata. Controlla posta in arrivo e spam. ${hasSignupAvatar ? 'La foto selezionata è in attesa su questo dispositivo e verrà caricata al primo accesso.' : ''}`, false, true);
   } catch (error) {
     console.error(error);
+    if (!signupAccepted) {
+      try {
+        await deleteProfileDraft(email);
+      } catch (draftError) {
+        console.error('Impossibile rimuovere la foto di registrazione in attesa.', draftError);
+      }
+    }
     setAccountStatus(error.message || 'Creazione account non riuscita.', true);
   } finally {
     setAuthRequestPending(false);
+  }
+}
+
+async function saveProfileSettings(event) {
+  event.preventDefault();
+  if (profileSavePending || !isAuthenticated || !cloudSession || !cloudSession.user) return;
+  const nickname = elements.profileNickname.value.trim();
+  if (!nickname || nickname.length > 32) {
+    elements.profileNickname.setCustomValidity('Inserisci un nickname da 1 a 32 caratteri.');
+    elements.profileNickname.reportValidity();
+    return;
+  }
+  elements.profileNickname.setCustomValidity('');
+  setProfileSavePending(true);
+  setProfileFormStatus('Salvataggio del profilo…', false, false, true);
+  const user = cloudSession.user;
+  const oldAvatarPath = accountProfile(user).avatarPath;
+  const shouldRemoveOldAvatar = Boolean(profileAvatarDraft || removeProfileAvatarOnSave);
+  let uploadedAvatarPath = null;
+  try {
+    let nextMetadata = { ...(user.user_metadata || {}), nickname, full_name: nickname };
+    if (profileAvatarDraft) {
+      const resizedAvatar = await resizeProfileImage(profileAvatarDraft);
+      uploadedAvatarPath = await uploadProfileAvatar(resizedAvatar, user.id);
+      nextMetadata.avatar_path = uploadedAvatarPath;
+      delete nextMetadata.avatar_url;
+      delete nextMetadata.picture;
+    } else if (removeProfileAvatarOnSave) {
+      delete nextMetadata.avatar_path;
+      delete nextMetadata.avatar_url;
+      delete nextMetadata.picture;
+    }
+    const updatedUser = await updateAuthenticatedUserMetadata(nextMetadata);
+    resolvedAvatarCache = null;
+    populateProfileSettings(updatedUser);
+    updateAccountControls();
+    let cleanupWarning = '';
+    if (oldAvatarPath && oldAvatarPath !== uploadedAvatarPath && shouldRemoveOldAvatar) {
+      try {
+        await removeStoredAvatar(oldAvatarPath);
+      } catch (error) {
+        console.warn('Profilo aggiornato, ma non è stato possibile rimuovere la foto precedente.', error);
+        cleanupWarning = ' La foto precedente non è stata rimossa dallo storage.';
+      }
+    }
+    setProfileFormStatus(`Profilo aggiornato.${cleanupWarning}`, Boolean(cleanupWarning), !cleanupWarning);
+  } catch (error) {
+    if (uploadedAvatarPath) {
+      try {
+        await removeStoredAvatar(uploadedAvatarPath);
+      } catch (cleanupError) {
+        console.warn('Impossibile rimuovere la nuova foto dopo un salvataggio profilo non riuscito.', cleanupError);
+      }
+    }
+    console.error(error);
+    setProfileFormStatus(error.message || 'Impossibile aggiornare il profilo.', true);
+  } finally {
+    setProfileSavePending(false);
   }
 }
 
@@ -680,19 +1402,100 @@ async function handleSaveNewPassword() {
 }
 
 async function handleSignOut() {
+  const session = cloudSession;
+  clearCloudSession();
+  isAuthenticated = false;
+  activeOwnerId = GUEST_OWNER_ID;
+  events = [];
+  purchases = [];
+  categories = [];
+  render();
+  updateAccountControls();
   try {
-    await supabaseAuthRequest('logout', {}, cloudSession.access_token);
-    clearCloudSession();
-    await clearAllEvents();
-    await clearAllPurchases();
-    events = [];
-    purchases = [];
+    events = await readAllEvents(GUEST_OWNER_ID);
+    purchases = await readAllPurchases(GUEST_OWNER_ID);
+    categories = await loadCategoriesForOwner(GUEST_OWNER_ID);
     render();
-    setAccountStatus('Disconnesso. Lo storico remoto è conservato nel tuo account.');
+    updateAccountControls();
+    closeAuthenticationModal();
+    if (session && session.access_token) {
+      try {
+        await supabaseAuthRequest('logout', {}, session.access_token);
+      } catch (error) {
+        console.warn('Sessione rimossa da questo dispositivo, ma la revoca remota non è stata confermata.', error);
+        setAccountStatus('Disconnesso da questo dispositivo. La revoca remota non è stata confermata; lo storico online resta nel tuo account.', true);
+        return;
+      }
+    }
+    setAccountStatus('Disconnesso da questo dispositivo. I dati locali e lo storico online sono conservati.');
   } catch (error) {
     console.error(error);
-    setAccountStatus(error.message || 'Disconnessione non riuscita.', true);
+    setAccountStatus(`Disconnesso, ma non è stato possibile caricare l’archivio locale: ${error.message || 'errore sconosciuto'}`, true);
   }
+}
+
+async function handleDeleteAccount() {
+  if (!cloudSession?.user?.id || !supabaseConfig.accountDeletionEnabled) return;
+  const userId = cloudSession.user.id;
+  const email = cloudSession.user.email;
+  const approved = await openActionDialog({
+    title: 'Eliminare definitivamente l’account?',
+    message: `L’account ${email}, lo storico cloud e le foto verranno eliminati. Non potrai recuperarli accedendo di nuovo. Le copie su altri dispositivi e i backup esportati vanno cancellati separatamente.`,
+    confirmLabel: 'Elimina definitivamente', danger: true
+  });
+  if (!approved || cloudSession?.user?.id !== userId) return;
+  const button = document.getElementById('delete-account');
+  button.disabled = true;
+  let remoteDeleted = false;
+  try {
+    if (cloudSyncPromise) await cloudSyncPromise.catch(() => {});
+    if (cloudSession?.user?.id !== userId) throw new Error('L’account è cambiato. Riprova.');
+    if (Number(cloudSession.expires_at) < Date.now() / 1000 + 60) saveCloudSession(await refreshCloudSession(cloudSession.refresh_token));
+    const response = await fetch(`${supabaseConfig.url.replace(/\/$/, '')}/functions/v1/delete-account`, {
+      method: 'POST', headers: { apikey: supabaseConfig.anonKey, Authorization: `Bearer ${cloudSession.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmation: 'DELETE_ACCOUNT' })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.deleted) throw new Error(result.error || 'Cancellazione non completata. Riprova o contatta il supporto.');
+    remoteDeleted = true;
+    clearCloudSession();
+    const tx = await createDatabaseTransaction('readwrite', [STORE_NAME, PURCHASE_STORE_NAME, CATEGORY_STORE_NAME, SYNC_STORE_NAME, PROFILE_DRAFT_STORE_NAME]);
+    const done = transactionDone(tx);
+    for (const storeName of [STORE_NAME, PURCHASE_STORE_NAME, CATEGORY_STORE_NAME]) {
+      const store = tx.objectStore(storeName);
+      const request = store.index('ownerId').getAllKeys(userId);
+      request.onsuccess = () => request.result.forEach(key => store.delete(key));
+    }
+    tx.objectStore(SYNC_STORE_NAME).delete(userId);
+    if (email) tx.objectStore(PROFILE_DRAFT_STORE_NAME).delete(email.toLowerCase());
+    await done;
+    localStorage.removeItem(GOALS_KEY + userId);
+    localStorage.removeItem(LAST_SYNC_USER_KEY);
+    const preferences = readCategoryPreferences();
+    delete preferences[userId];
+    localStorage.setItem(CATEGORY_PREFERENCES_KEY, JSON.stringify(preferences));
+    await activateGuestArchive();
+    showToast('Account e dati cloud eliminati.');
+  } catch (error) {
+    if (remoteDeleted) await activateGuestArchive();
+    await openActionDialog({ title: remoteDeleted ? 'Account eliminato' : 'Cancellazione non completata',
+      message: remoteDeleted ? 'I dati cloud sono stati eliminati, ma la pulizia locale non è completa. Rimuovi i dati del sito dalle impostazioni del browser.' : error.message, notice: true });
+  } finally { button.disabled = false; }
+}
+
+async function activateGuestArchive() {
+  activeOwnerId = GUEST_OWNER_ID;
+  isAuthenticated = false;
+  events = [];
+  purchases = [];
+  categories = [];
+  render();
+  updateAccountControls();
+  events = await readAllEvents(GUEST_OWNER_ID);
+  purchases = await readAllPurchases(GUEST_OWNER_ID);
+  categories = await loadCategoriesForOwner(GUEST_OWNER_ID);
+  render();
+  updateAccountControls();
 }
 
 function restoreCloudSession() {
@@ -775,15 +1578,30 @@ async function restoreCloudSessionFromUrl() {
   if (!stored) {
     isAuthenticated = false;
     updateAccountControls();
-    setAccountStatus('Accedi o crea un account per sincronizzare lo storico online.');
+    setAccountStatus('I tuoi dati vengono salvati su questo dispositivo. Collega un account quando vuoi sincronizzarli.');
     return;
   }
+  let cachedUserId = null;
+  let hasLoadedCachedArchive = false;
   try {
     const session = JSON.parse(stored);
     if (!session.access_token || !session.refresh_token) {
       throw new Error('Sessione locale non valida.');
     }
     cloudSession = session;
+    cachedUserId = session.user && session.user.id;
+    if (typeof cachedUserId === 'string' && cachedUserId) {
+      activeOwnerId = cachedUserId;
+      events = await readAllEvents(cachedUserId);
+      purchases = await readAllPurchases(cachedUserId);
+      categories = await loadCategoriesForOwner(cachedUserId);
+      hasLoadedCachedArchive = true;
+      isAuthenticated = true;
+      isAppReady = true;
+      populateProfileSettings(session.user);
+      render();
+      updateAccountControls();
+    }
     if (isPasswordRecovery) openAuthenticationModal();
     const expiresAt = Number(session.expires_at);
     if (!Number.isFinite(expiresAt) || expiresAt < Math.floor(Date.now() / 1000) + 60) {
@@ -808,7 +1626,16 @@ async function restoreCloudSessionFromUrl() {
     if (!user.ok) throw new Error(`Verifica dell’account non riuscita (HTTP ${user.status}).`);
     cloudSession.user = await user.json();
     saveCloudSession(cloudSession);
+    cachedUserId = cloudSession.user.id;
     await syncCloudEvents();
+    try {
+      if (await completePendingProfileSetup(cloudSession.user)) {
+        setAccountStatus('Accesso ripristinato. Foto profilo applicata.');
+      }
+    } catch (error) {
+      console.error(error);
+      setAccountStatus(`Account sincronizzato, ma la foto profilo in attesa non è stata caricata: ${error.message || 'riprova dalle impostazioni account.'}`, true);
+    }
     if (isPasswordRecovery) {
       isAuthenticated = false;
       updateAccountControls();
@@ -817,10 +1644,21 @@ async function restoreCloudSessionFromUrl() {
     }
   } catch (error) {
     console.error(error);
-    if (error.authSessionCleared) return;
-    isAuthenticated = false;
+    if (error.authSessionCleared) {
+      await activateGuestArchive();
+      setAccountStatus('La sessione cloud non è più valida. Puoi continuare con i dati locali o accedere di nuovo.', true);
+      return;
+    }
+    if (hasLoadedCachedArchive && cachedUserId && activeOwnerId === cachedUserId) {
+      isAuthenticated = true;
+      isAppReady = true;
+      updateAccountControls();
+      setAccountStatus(`Connessione non disponibile. Stai usando la copia locale dell’account.${error.message ? ` ${error.message}` : ''}`, false, false, true);
+      return;
+    }
+    await activateGuestArchive();
     updateAccountControls();
-    setAccountStatus(error.message || 'Impossibile ripristinare la sessione cloud.', true);
+    setAccountStatus(`Accesso cloud non disponibile. I dati locali restano utilizzabili.${error.message ? ` ${error.message}` : ''}`, false, false, true);
   }
 }
 
@@ -848,25 +1686,36 @@ function setupAuthenticationEvents() {
   window.addEventListener('storage', event => {
     if (event.key === CLOUD_SESSION_KEY) {
       if (!event.newValue && isAuthenticated) {
-        // Un logout in un'altra scheda deve rimuovere anche la copia locale protetta dal gate.
         cloudSession = null;
-        isAuthenticated = false;
-        Promise.resolve(cloudSyncPromise).catch(() => {}).then(() => Promise.all([clearAllEvents(), clearAllPurchases()])).then(() => {
-          events = [];
-          purchases = [];
-          render();
-          updateAccountControls();
-          setAccountStatus('Sessione terminata in un’altra scheda. Accedi di nuovo per continuare.');
+        void activateGuestArchive().then(() => {
+          setAccountStatus('Sessione terminata in un’altra scheda. Lo storico online resta nel tuo account.');
         }).catch(error => {
           console.error(error);
-          updateAccountControls();
-          setAccountStatus('Sessione terminata in un’altra scheda; non è stato possibile svuotare la copia locale.', true);
+          setAccountStatus(`Sessione terminata in un’altra scheda; archivio locale non caricato: ${error.message || 'errore sconosciuto'}`, true);
         });
-      } else if (event.newValue && !isAuthenticated) {
-        void restoreCloudSession();
+      } else if (event.newValue) {
+        let nextSession = null;
+        let nextUserId = null;
+        try {
+          nextSession = JSON.parse(event.newValue);
+          nextUserId = nextSession.user && nextSession.user.id;
+        } catch (error) {
+          console.warn('La sessione aggiornata nell’altra scheda non è leggibile.', error);
+        }
+        const accountChanged = nextUserId !== activeOwnerId;
+        if (accountChanged) cloudSession = null;
+        else cloudSession = nextSession;
+        void (async () => {
+          if (accountChanged) await activateGuestArchive();
+          if (accountChanged || !isAuthenticated) await restoreCloudSession();
+        })().catch(error => {
+          console.error(error);
+          setAccountStatus(`Impossibile aggiornare la sessione dell’altra scheda: ${error.message || 'errore sconosciuto'}`, true);
+        });
       }
     }
   });
+  window.addEventListener('online', () => requestCloudSync());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void refreshWhenReturningToApp();
   });
@@ -886,14 +1735,35 @@ function openDatabase() {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        store.createIndex('timestamp', 'timestamp', { unique: false });
+      const legacyOwnerId = localStorage.getItem(LAST_SYNC_USER_KEY) || GUEST_OWNER_ID;
+      const migrateStore = (storeName, hasTimestamp) => {
+        if (!db.objectStoreNames.contains(storeName)) {
+          const store = db.createObjectStore(storeName, { keyPath: 'localKey' });
+          store.createIndex('ownerId', 'ownerId', { unique: false });
+          if (hasTimestamp) store.createIndex('timestamp', 'timestamp', { unique: false });
+          store.createIndex('updatedAt', 'updatedAt', { unique: false });
+          return;
+        }
+        const oldStore = request.transaction.objectStore(storeName);
+        if (oldStore.keyPath === 'localKey') return;
+        const read = oldStore.getAll();
+        read.onsuccess = () => {
+          const records = read.result || [];
+          db.deleteObjectStore(storeName);
+          const store = db.createObjectStore(storeName, { keyPath: 'localKey' });
+          store.createIndex('ownerId', 'ownerId', { unique: false });
+          if (hasTimestamp) store.createIndex('timestamp', 'timestamp', { unique: false });
+          store.createIndex('updatedAt', 'updatedAt', { unique: false });
+          for (const record of records) store.put(normalizeStoredRecord(record, legacyOwnerId));
+        };
+      };
+      migrateStore(STORE_NAME, true);
+      migrateStore(PURCHASE_STORE_NAME, true);
+      migrateStore(CATEGORY_STORE_NAME, false);
+      if (!db.objectStoreNames.contains(PROFILE_DRAFT_STORE_NAME)) {
+        db.createObjectStore(PROFILE_DRAFT_STORE_NAME, { keyPath: 'email' });
       }
-      if (!db.objectStoreNames.contains(PURCHASE_STORE_NAME)) {
-        const store = db.createObjectStore(PURCHASE_STORE_NAME, { keyPath: 'id' });
-        store.createIndex('timestamp', 'timestamp', { unique: false });
-      }
+      if (!db.objectStoreNames.contains(SYNC_STORE_NAME)) db.createObjectStore(SYNC_STORE_NAME, { keyPath: 'ownerId' });
     };
     request.onsuccess = () => {
       const openedDatabase = request.result;
@@ -908,7 +1778,7 @@ function openDatabase() {
       resolve(openedDatabase);
     };
     request.onerror = () => reject(request.error || new Error('Impossibile aprire l’archivio locale.'));
-    request.onblocked = () => reject(new Error('Chiudi eventuali altre schede di SmokeLog e riprova.'));
+    request.onblocked = () => reject(new Error('Chiudi eventuali altre schede di SmokeLOG e riprova.'));
   });
   databaseOpening.then(
     () => { databaseOpening = null; },
@@ -939,92 +1809,279 @@ function transactionDone(transaction) {
   });
 }
 
-async function readAllEvents() {
-  const tx = await createDatabaseTransaction('readonly');
+async function readAllEvents(ownerId = activeOwnerId, includeDeleted = false) {
+  return readOwnerRecords(STORE_NAME, ownerId, includeDeleted);
+}
+
+async function readOwnerRecords(storeName, ownerId, includeDeleted = false) {
+  const tx = await createDatabaseTransaction('readonly', storeName);
   const done = transactionDone(tx);
-  const request = tx.objectStore(STORE_NAME).getAll();
+  const request = tx.objectStore(storeName).index('ownerId').getAll(ownerId);
   const result = await new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result || []);
     request.onerror = () => reject(request.error || new Error('Impossibile leggere lo storico.'));
   });
   await done;
-  return result.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  return result.filter(record => record.ownerId === ownerId && (includeDeleted || !record.deletedAt))
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 }
 
-async function persistEvent(event) {
-  const tx = await createDatabaseTransaction('readwrite');
-  tx.objectStore(STORE_NAME).add(event);
+function normalizeStoredRecord(record, ownerId = activeOwnerId) {
+  const recordOwner = ownerId;
+  return {
+    ...record,
+    ownerId: recordOwner,
+    localKey: `${recordOwner}:${record.id}`,
+    updatedAt: record.updatedAt || record.updated_at || record.timestamp,
+    deletedAt: record.deletedAt || record.deleted_at || null
+  };
+}
+
+async function writeStoredRecord(storeName, record, ownerId, add = false) {
+  const tx = await createDatabaseTransaction('readwrite', storeName);
+  const store = tx.objectStore(storeName);
+  store[add ? 'add' : 'put'](normalizeStoredRecord(record, ownerId));
   await transactionDone(tx);
 }
 
-async function updateStoredEvent(event) {
-  const tx = await createDatabaseTransaction('readwrite');
-  tx.objectStore(STORE_NAME).put(event);
+async function replaceOwnerRecords(storeName, records, ownerId) {
+  const tx = await createDatabaseTransaction('readwrite', storeName);
+  const store = tx.objectStore(storeName);
+  const request = store.getAll();
+  request.onsuccess = () => {
+    for (const record of request.result || []) {
+      if (record.ownerId === ownerId) store.delete(record.localKey);
+    }
+    for (const record of records) store.put(normalizeStoredRecord(record, ownerId));
+  };
   await transactionDone(tx);
 }
 
-async function removeEvent(id) {
-  const tx = await createDatabaseTransaction('readwrite');
-  tx.objectStore(STORE_NAME).delete(id);
-  await transactionDone(tx);
+function recordsNeedingUpload(records, remoteRecords) {
+  const remoteById = new Map(remoteRecords.map(record => [record.id, record]));
+  return records.filter(record => {
+    const remote = remoteById.get(record.id);
+    if (!remote) return true;
+    return Date.parse(record.updatedAt || record.timestamp) > Date.parse(remote.updatedAt || remote.timestamp);
+  });
 }
 
-async function replaceAllEvents(importedEvents) {
-  const tx = await createDatabaseTransaction('readwrite');
-  const store = tx.objectStore(STORE_NAME);
-  store.clear();
-  for (const event of importedEvents) store.put(event);
-  await transactionDone(tx);
+function mergeArchiveSnapshot(incoming, current, snapshot) {
+  const result = new Map(current.map(record => [record.id, record]));
+  const expected = snapshot && new Map(snapshot.map(record => [record.id, record]));
+  for (const record of incoming) {
+    const local = result.get(record.id);
+    // Compare inside the write transaction: a second tab can write after the
+    // network snapshot without incrementing this tab's mutation counter.
+    if (expected && local && JSON.stringify(local) !== JSON.stringify(expected.get(record.id))) continue;
+    if (!expected && local && Date.parse(local.updatedAt || local.timestamp) >= Date.parse(record.updatedAt || record.timestamp)) continue;
+    result.set(record.id, record);
+  }
+  return [...result.values()];
 }
 
-async function clearAllEvents() {
-  const tx = await createDatabaseTransaction('readwrite');
-  tx.objectStore(STORE_NAME).clear();
-  await transactionDone(tx);
-}
-
-async function readAllPurchases() {
-  const tx = await createDatabaseTransaction('readonly', PURCHASE_STORE_NAME);
+async function commitArchive(ownerId, incoming, snapshots = null, guestSnapshots = null, cloudSnapshot = null) {
+  const stores = [STORE_NAME, PURCHASE_STORE_NAME, CATEGORY_STORE_NAME];
+  const tx = await createDatabaseTransaction('readwrite', cloudSnapshot ? [...stores, SYNC_STORE_NAME] : stores);
   const done = transactionDone(tx);
-  const request = tx.objectStore(PURCHASE_STORE_NAME).getAll();
-  const result = await new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error || new Error('Impossibile leggere lo storico degli acquisti.'));
+  if (cloudSnapshot) tx.objectStore(SYNC_STORE_NAME).put(cloudSnapshot);
+  const committed = [];
+  stores.forEach((name, index) => {
+    const store = tx.objectStore(name);
+    const request = store.index('ownerId').getAll(ownerId);
+    request.onsuccess = () => {
+      committed[index] = mergeArchiveSnapshot(incoming[index], request.result, snapshots && snapshots[index])
+        .map(record => normalizeStoredRecord(record, ownerId));
+      const stored = new Map(request.result.map(record => [record.id, record]));
+      for (const record of committed[index]) {
+        const normalized = normalizeStoredRecord(record, ownerId);
+        if (JSON.stringify(normalized) !== JSON.stringify(stored.get(record.id))) store.put(normalized);
+      }
+    };
+    // Migration and cleanup share the transaction: neither half can commit alone.
+    if (guestSnapshots && ownerId !== GUEST_OWNER_ID) {
+      for (const snapshot of guestSnapshots[index]) {
+        const guest = store.get(`${GUEST_OWNER_ID}:${snapshot.id}`);
+        guest.onsuccess = () => {
+          if (JSON.stringify(guest.result) === JSON.stringify(snapshot)) store.delete(`${GUEST_OWNER_ID}:${snapshot.id}`);
+        };
+      }
+    }
   });
   await done;
-  return result.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  return committed;
 }
 
-async function persistPurchase(purchase) {
-  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
-  tx.objectStore(PURCHASE_STORE_NAME).add(purchase);
+async function clearOwnerRecords(storeName, ownerId) {
+  const tx = await createDatabaseTransaction('readwrite', storeName);
+  const store = tx.objectStore(storeName);
+  const request = store.getAll();
+  request.onsuccess = () => {
+    for (const record of request.result || []) {
+      if (record.ownerId === ownerId) store.delete(record.localKey);
+    }
+  };
   await transactionDone(tx);
 }
 
-async function updateStoredPurchase(purchase) {
-  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
-  tx.objectStore(PURCHASE_STORE_NAME).put(purchase);
+async function clearOwnerRecordsBySnapshot(storeName, ownerId, records) {
+  if (!records.length) return;
+  const expected = new Map(records.map(record => [record.id, record.updatedAt || record.timestamp]));
+  const tx = await createDatabaseTransaction('readwrite', storeName);
+  const store = tx.objectStore(storeName);
+  const request = store.getAll();
+  request.onsuccess = () => {
+    for (const record of request.result || []) {
+      const expectedUpdatedAt = expected.get(record.id);
+      const actualUpdatedAt = record.updatedAt || record.timestamp;
+      if (record.ownerId === ownerId && expectedUpdatedAt && actualUpdatedAt === expectedUpdatedAt) {
+        store.delete(record.localKey);
+      }
+    }
+  };
   await transactionDone(tx);
 }
 
-async function removePurchase(id) {
-  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
-  tx.objectStore(PURCHASE_STORE_NAME).delete(id);
-  await transactionDone(tx);
+async function persistEvent(event, ownerId = activeOwnerId) {
+  await writeStoredRecord(STORE_NAME, event, ownerId, true);
 }
 
-async function replaceAllPurchases(importedPurchases) {
-  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
-  const store = tx.objectStore(PURCHASE_STORE_NAME);
-  store.clear();
-  for (const purchase of importedPurchases) store.put(purchase);
-  await transactionDone(tx);
+async function updateStoredEvent(event, ownerId = event.ownerId || activeOwnerId) {
+  await writeStoredRecord(STORE_NAME, event, ownerId);
 }
 
-async function clearAllPurchases() {
-  const tx = await createDatabaseTransaction('readwrite', PURCHASE_STORE_NAME);
-  tx.objectStore(PURCHASE_STORE_NAME).clear();
-  await transactionDone(tx);
+async function replaceAllEvents(importedEvents, ownerId = activeOwnerId) {
+  await replaceOwnerRecords(STORE_NAME, importedEvents, ownerId);
+}
+
+async function clearAllEvents(ownerId = activeOwnerId) {
+  await clearOwnerRecords(STORE_NAME, ownerId);
+}
+
+async function readAllPurchases(ownerId = activeOwnerId, includeDeleted = false) {
+  return readOwnerRecords(PURCHASE_STORE_NAME, ownerId, includeDeleted);
+}
+
+async function persistPurchase(purchase, ownerId = activeOwnerId) {
+  await writeStoredRecord(PURCHASE_STORE_NAME, purchase, ownerId, true);
+}
+
+async function updateStoredPurchase(purchase, ownerId = purchase.ownerId || activeOwnerId) {
+  await writeStoredRecord(PURCHASE_STORE_NAME, purchase, ownerId);
+}
+
+async function replaceAllPurchases(importedPurchases, ownerId = activeOwnerId) {
+  await replaceOwnerRecords(PURCHASE_STORE_NAME, importedPurchases, ownerId);
+}
+
+async function clearAllPurchases(ownerId = activeOwnerId) {
+  await clearOwnerRecords(PURCHASE_STORE_NAME, ownerId);
+}
+
+async function readAllCategories(ownerId = activeOwnerId, includeDeleted = false) {
+  return readOwnerRecords(CATEGORY_STORE_NAME, ownerId, includeDeleted);
+}
+
+async function persistCategory(category, ownerId = activeOwnerId) {
+  await writeStoredRecord(CATEGORY_STORE_NAME, category, ownerId);
+}
+
+async function replaceAllCategories(records, ownerId = activeOwnerId) {
+  await replaceOwnerRecords(CATEGORY_STORE_NAME, records, ownerId);
+}
+
+async function clearAllCategories(ownerId = activeOwnerId) {
+  await clearOwnerRecords(CATEGORY_STORE_NAME, ownerId);
+}
+
+function readCategoryPreferences() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CATEGORY_PREFERENCES_KEY) || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch (error) {
+    console.warn('Preferenze locali delle categorie non leggibili.', error);
+    return {};
+  }
+}
+
+function rememberCategoryPreference(ownerId, category) {
+  try {
+    const preferences = readCategoryPreferences();
+    const ownerPreferences = preferences[ownerId] && typeof preferences[ownerId] === 'object'
+      ? preferences[ownerId]
+      : {};
+    ownerPreferences[category.id] = {
+      name: category.name,
+      color: category.color,
+      position: category.position,
+      isActive: Boolean(category.isActive),
+      updatedAt: category.updatedAt || new Date().toISOString()
+    };
+    preferences[ownerId] = ownerPreferences;
+    localStorage.setItem(CATEGORY_PREFERENCES_KEY, JSON.stringify(preferences));
+  } catch (error) {
+    console.warn('Preferenza della categoria non salvata nel fallback locale.', error);
+  }
+}
+
+function clearCategoryPreferences(ownerId, categoriesToClear) {
+  try {
+    const preferences = readCategoryPreferences();
+    const ownerPreferences = preferences[ownerId];
+    if (!ownerPreferences || typeof ownerPreferences !== 'object') return;
+    for (const category of categoriesToClear) {
+      const preference = ownerPreferences[category.id];
+      if (!preference) continue;
+      const cloudConfirmedPreference = preference.name === category.name
+        && preference.color === category.color
+        && preference.position === category.position
+        && preference.isActive === Boolean(category.isActive);
+      if (cloudConfirmedPreference) delete ownerPreferences[category.id];
+    }
+    if (Object.keys(ownerPreferences).length === 0) delete preferences[ownerId];
+    localStorage.setItem(CATEGORY_PREFERENCES_KEY, JSON.stringify(preferences));
+  } catch (error) {
+    console.warn('Preferenze locali delle categorie non aggiornate.', error);
+  }
+}
+
+async function loadCategoriesForOwner(ownerId) {
+  const stored = await readAllCategories(ownerId, true);
+  const ownerPreferences = readCategoryPreferences()[ownerId];
+  const existing = stored.map(category => {
+    const preference = ownerPreferences && ownerPreferences[category.id];
+    if (!preference || typeof preference.name !== 'string' || !preference.name.trim()
+      || preference.name.trim().length > 28 || !Object.hasOwn(CATEGORY_COLORS, preference.color)
+      || !Number.isInteger(preference.position) || typeof preference.isActive !== 'boolean'
+      || typeof preference.updatedAt !== 'string' || !Number.isFinite(Date.parse(preference.updatedAt))) {
+      return category;
+    }
+    return {
+      ...category,
+      name: preference.name.trim(),
+      color: preference.color,
+      position: preference.position,
+      isActive: preference.isActive,
+      updatedAt: preference.updatedAt,
+      pendingSync: true
+    };
+  });
+  const knownIds = new Set(existing.map(category => category.id));
+  const defaults = DEFAULT_EVENT_CATEGORIES
+    .map((category, index) => ({
+      ...category,
+      position: index,
+      isActive: true,
+      updatedAt: new Date(0).toISOString(),
+      deletedAt: null
+    }))
+    .filter(category => !knownIds.has(category.id));
+  for (const category of existing.filter(item => item.pendingSync && ownerPreferences && ownerPreferences[item.id])) {
+    await persistCategory(category, ownerId);
+  }
+  for (const category of defaults) await persistCategory(category, ownerId);
+  return [...existing, ...defaults].filter(category => !category.deletedAt)
+    .sort((first, second) => first.position - second.position);
 }
 
 function makeId() {
@@ -1074,30 +2131,264 @@ function withinRange(event, start, end) {
 }
 
 function countTypes(source) {
-  let cigarettes = 0;
-  let joints = 0;
-  let halfCigarettes = 0;
-  let puzzetta = 0;
-  let puff = 0;
+  const byCategory = {};
+  let total = 0;
   for (const event of source) {
-    if (event.type === 'cigarette') cigarettes += 1;
-    if (event.type === 'joint') joints += 1;
-    if (event.type === 'half-cigarette') halfCigarettes += 1;
-    if (event.type === 'puzzetta') puzzetta += 1;
-    if (event.type === 'puff') puff += 1;
+    if (event.deletedAt) continue;
+    byCategory[event.type] = (byCategory[event.type] || 0) + 1;
+    total += 1;
   }
-  return {
-    total: cigarettes + joints + halfCigarettes + puzzetta + puff,
-    cigarettes,
-    joints,
-    halfCigarettes,
-    puzzetta,
-    puff
-  };
+  return { total, byCategory };
 }
 
 function eventLabel(type) {
-  return Object.prototype.hasOwnProperty.call(EVENT_LABELS, type) ? EVENT_LABELS[type] : 'Registrazione';
+  const category = categories.find(item => item.id === type);
+  return category?.name || (Object.hasOwn(EVENT_LABELS, type) ? EVENT_LABELS[type] : 'Registrazione');
+}
+
+function categoryColor(category) {
+  return CATEGORY_COLORS[category.color] || CATEGORY_COLORS.slate;
+}
+
+function renderCategoryControls(todayCounts, periodCounts) {
+  const categoryCount = new Map(categories.map(category => [category.id, todayCounts.byCategory[category.id] || 0]));
+  const categoriesWithHistory = categories.filter(category => category.isActive || (periodCounts.byCategory[category.id] || 0) > 0);
+
+  elements.recordButtons.replaceChildren();
+  for (const category of categories.filter(item => item.isActive).sort((first, second) => first.position - second.position)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.eventType = category.id;
+    button.className = Object.hasOwn(EVENT_LABELS, category.id)
+      ? `record-button ${category.id}-button`
+      : 'record-button custom-category-button';
+    const symbol = document.createElement('span');
+    symbol.className = Object.hasOwn(EVENT_LABELS, category.id)
+      ? `record-symbol ${category.id === 'half-cigarette' ? 'half-cigarette' : category.id}-symbol`
+      : 'record-symbol custom-category-symbol';
+    symbol.setAttribute('aria-hidden', 'true');
+    if (!Object.hasOwn(EVENT_LABELS, category.id)) {
+      symbol.textContent = '●';
+      symbol.style.color = categoryColor(category);
+      button.style.setProperty('--category-accent', categoryColor(category));
+    }
+    const copy = document.createElement('span');
+    copy.className = 'record-button-copy';
+    const name = document.createElement('strong');
+    name.textContent = category.name;
+    const instruction = document.createElement('small');
+    instruction.textContent = 'Aggiungi una';
+    copy.append(name, instruction);
+    const plus = document.createElement('span');
+    plus.className = 'record-plus';
+    plus.setAttribute('aria-hidden', 'true');
+    plus.textContent = '+';
+    button.append(symbol, copy, plus);
+    button.addEventListener('click', () => void handleAddEvent(category.id));
+    elements.recordButtons.append(button);
+  }
+
+  elements.todayCategoryCounts.replaceChildren();
+  for (const category of categoriesWithHistory.sort((first, second) => first.position - second.position)) {
+    const item = document.createElement('span');
+    const dot = document.createElement('span');
+    dot.className = `mini-dot${Object.hasOwn(EVENT_LABELS, category.id) ? ` dot-${category.id}` : ''}`;
+    if (!Object.hasOwn(EVENT_LABELS, category.id)) dot.style.backgroundColor = categoryColor(category);
+    const count = document.createElement('strong');
+    count.textContent = formatNumber(categoryCount.get(category.id) || 0);
+    item.append(dot, count, document.createTextNode(` ${category.name}`));
+    elements.todayCategoryCounts.append(item);
+  }
+
+  elements.categoryStatsGrid.replaceChildren();
+  for (const category of categoriesWithHistory) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'stat-card category-stat-card';
+    button.dataset.eventType = category.id;
+    const label = document.createElement('span');
+    label.className = 'stat-label';
+    label.textContent = category.name;
+    const value = document.createElement('strong');
+    value.className = 'stat-value';
+    value.textContent = formatNumber(periodCounts.byCategory[category.id] || 0);
+    value.style.color = categoryColor(category);
+    const footnote = document.createElement('span');
+    footnote.className = 'stat-footnote';
+    footnote.textContent = 'nel periodo · dettagli';
+    button.append(label, value, footnote);
+    elements.categoryStatsGrid.append(button);
+  }
+}
+
+function renderCategoryManager() {
+  // Background sync must not replace an input while the user is typing.
+  if (document.activeElement?.matches('input[type="text"]') && elements.categoryManager.contains(document.activeElement)) return;
+  elements.categoryManager.replaceChildren();
+  const ordered = [...categories].sort((first, second) => first.position - second.position);
+  ordered.forEach((category, index) => {
+    const row = document.createElement('div');
+    row.className = 'category-manager-row';
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.maxLength = 28;
+    name.value = category.name;
+    name.setAttribute('aria-label', `Rinomina ${category.name}`);
+    name.addEventListener('change', () => {
+      const nextName = name.value.trim();
+      const duplicate = categories.some(item => item.id !== category.id && item.name.toLocaleLowerCase('it-IT') === nextName.toLocaleLowerCase('it-IT'));
+      if (!nextName || duplicate) {
+        name.value = category.name;
+        showToast(duplicate ? 'Esiste già una categoria con questo nome.' : 'Il nome della categoria non può essere vuoto.', 'error');
+        return;
+      }
+      if (nextName === category.name) return;
+      void saveCategoryChanges({ id: category.id, name: nextName });
+    });
+    const activeLabel = document.createElement('label');
+    activeLabel.className = 'category-toggle';
+    const active = document.createElement('input');
+    active.type = 'checkbox';
+    active.checked = Boolean(category.isActive);
+    active.setAttribute('aria-label', `${category.isActive ? 'Nascondi' : 'Mostra'} pulsante ${category.name}`);
+    active.addEventListener('change', () => {
+      void saveCategoryChanges({ id: category.id, isActive: active.checked });
+    });
+    activeLabel.append(active, document.createTextNode('Mostra pulsante'));
+    const order = document.createElement('div');
+    order.className = 'category-order-controls';
+    for (const [direction, text, label] of [
+      ['up', '↑', `Sposta ${category.name} in alto`],
+      ['down', '↓', `Sposta ${category.name} in basso`]
+    ]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = text;
+      button.disabled = direction === 'up' ? index === 0 : index === ordered.length - 1;
+      button.setAttribute('aria-label', label);
+      button.addEventListener('click', () => void moveCategory(category.id, direction));
+      order.append(button);
+    }
+    row.append(name, activeLabel, order);
+    elements.categoryManager.append(row);
+  });
+}
+
+async function saveCategoryChanges(updatedCategory) {
+  try {
+    const current = categories.find(category => category.id === updatedCategory.id);
+    if (!current) return;
+    const categoryToSave = { ...current, ...updatedCategory, pendingSync: true,
+      updatedAt: new Date(Math.max(Date.now(), (Date.parse(current.updatedAt) || 0) + 1)).toISOString() };
+    const nextCategories = categories.map(category => category.id === categoryToSave.id ? categoryToSave : category);
+    await persistCategory(categoryToSave);
+    rememberCategoryPreference(activeOwnerId, categoryToSave);
+    markLocalMutation();
+    categories = nextCategories.sort((first, second) => first.position - second.position);
+    render();
+    setCategorySettingsStatus('Modifiche salvate su questo dispositivo.');
+    requestCloudSync();
+  } catch (error) {
+    console.error(error);
+    renderCategoryManager();
+    setCategorySettingsStatus('Modifica non salvata. Riprova.', true);
+    showToast('Modifica della categoria non salvata sul dispositivo.', 'error');
+  }
+}
+
+async function moveCategory(categoryId, direction) {
+  const ordered = categories.map(category => ({ ...category })).sort((first, second) => first.position - second.position);
+  const index = ordered.findIndex(category => category.id === categoryId);
+  const nextIndex = index + (direction === 'up' ? -1 : 1);
+  if (index < 0 || nextIndex < 0 || nextIndex >= ordered.length) return;
+  const timestamp = new Date().toISOString();
+  [ordered[index].position, ordered[nextIndex].position] = [ordered[nextIndex].position, ordered[index].position];
+  const changed = [ordered[index], ordered[nextIndex]].map(category => ({ ...category, updatedAt: timestamp, pendingSync: true }));
+  try {
+    for (const category of changed) {
+      await persistCategory(category);
+      rememberCategoryPreference(activeOwnerId, category);
+    }
+    markLocalMutation();
+    const changedById = new Map(changed.map(category => [category.id, category]));
+    categories = ordered.map(category => changedById.get(category.id) || category);
+    render();
+    setCategorySettingsStatus('Ordine salvato su questo dispositivo.');
+    requestCloudSync();
+  } catch (error) {
+    console.error(error);
+    renderCategoryManager();
+    setCategorySettingsStatus('Ordine non salvato. Riprova.', true);
+    showToast('Ordine delle categorie non salvato sul dispositivo.', 'error');
+  }
+}
+
+async function addCategory(name) {
+  const normalizedName = name.trim();
+  if (!normalizedName) return false;
+  if (categories.some(category => category.name.toLocaleLowerCase('it-IT') === normalizedName.toLocaleLowerCase('it-IT'))) {
+    showToast('Esiste già una categoria con questo nome.', 'error');
+    return false;
+  }
+  const colors = Object.keys(CATEGORY_COLORS);
+  const category = {
+    id: makeId(),
+    name: normalizedName,
+    color: colors[categories.length % colors.length],
+    position: categories.length ? Math.max(...categories.map(item => item.position)) + 1 : 0,
+    isActive: true,
+    updatedAt: new Date().toISOString(),
+    deletedAt: null,
+    pendingSync: true
+  };
+  try {
+    await persistCategory(category);
+    rememberCategoryPreference(activeOwnerId, category);
+    markLocalMutation();
+    categories.push(category);
+    render();
+    setCategorySettingsStatus('Categoria salvata su questo dispositivo.');
+    requestCloudSync();
+    showToast(`Categoria “${normalizedName}” aggiunta.`);
+    return true;
+  } catch (error) {
+    console.error(error);
+    setCategorySettingsStatus('Categoria non salvata. Riprova.', true);
+    showToast('Categoria non salvata sul dispositivo.', 'error');
+    return false;
+  }
+}
+
+function setCategorySettingsStatus(message, isError = false) {
+  if (!elements.categorySettingsStatus) return;
+  elements.categorySettingsStatus.textContent = message;
+  elements.categorySettingsStatus.classList.toggle('is-error', isError);
+}
+
+function setupSettingsSectionPreferences() {
+  let preferences = {};
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_SECTIONS_KEY) || '{}');
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) preferences = saved;
+  } catch (error) {
+    console.error(error);
+    showToast('Non è stato possibile recuperare lo stato delle sezioni delle impostazioni.', 'error');
+  }
+
+  const sections = [...document.querySelectorAll('details.settings-section[data-settings-key]')];
+  for (const section of sections) {
+    const key = section.dataset.settingsKey;
+    if (typeof preferences[key] === 'boolean') section.open = preferences[key];
+    section.addEventListener('toggle', () => {
+      preferences[key] = section.open;
+      try {
+        localStorage.setItem(SETTINGS_SECTIONS_KEY, JSON.stringify(preferences));
+      } catch (error) {
+        console.error(error);
+        showToast('Lo stato delle impostazioni non è stato salvato su questo dispositivo.', 'error');
+      }
+    });
+  }
 }
 
 function formatNumber(number) {
@@ -1178,42 +2469,154 @@ function makeBuckets(range, now = new Date()) {
   });
 }
 
+function calculateAxis(maxValue, divisions = 4) {
+  const safeMax = Math.max(0, maxValue);
+  const roughStep = safeMax > 0 ? safeMax / divisions : 1;
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const normalizedStep = roughStep / magnitude;
+  const stepSize = normalizedStep <= 1 ? 1
+    : normalizedStep <= 2 ? 2
+      : normalizedStep <= 5 ? 5
+        : 10;
+  const step = stepSize * magnitude;
+  const max = Math.max(step, Math.ceil(safeMax / step) * step);
+  const ticks = [];
+  for (let value = 0; value <= max + step * 0.001; value += step) {
+    ticks.push(Number(value.toPrecision(12)));
+  }
+  return { max, ticks };
+}
+
+function calculateCountAxis(maxValue) {
+  const step = Math.max(1, Math.ceil(maxValue / 4));
+  const max = Math.max(4, Math.ceil(maxValue / step) * step);
+  return {
+    max,
+    ticks: Array.from({ length: max / step + 1 }, (_, index) => index * step)
+  };
+}
+
+function formatAverage(value) {
+  return new Intl.NumberFormat('it-IT', { maximumFractionDigits: 1 }).format(value);
+}
+
+function createChartSvgElement(svg, tag, attributes = {}) {
+  const element = document.createElementNS(svg.namespaceURI, tag);
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, String(value));
+  return element;
+}
+
+function chartBucketLabels(range, bucket) {
+  if (range === 'week') {
+    const date = new Date(bucket.start);
+    return [
+      capitalizeFirst(date.toLocaleDateString('it-IT', { weekday: 'short' }).replace('.', '')),
+      String(date.getDate())
+    ];
+  }
+  return [bucket.shortLabel, ''];
+}
+
 function renderChart(range, periodEvents, now = new Date()) {
   const buckets = makeBuckets(range, now);
   for (const bucket of buckets) {
     bucket.count = periodEvents.filter(event => withinRange(event, bucket.start, bucket.end)).length;
   }
-  const maxCount = Math.max(1, ...buckets.map(bucket => bucket.count));
-  elements.chartBars.replaceChildren();
-
-  for (const bucket of buckets) {
-    const row = document.createElement('div');
-    row.className = 'chart-row';
-    const label = document.createElement('span');
-    label.className = 'chart-label';
-    label.textContent = bucket.label;
-    const track = document.createElement('div');
-    track.className = 'bar-track';
-    track.setAttribute('aria-label', `${bucket.label}: ${bucket.count}`);
-    const fill = document.createElement('div');
-    fill.className = 'bar-fill';
-    fill.style.width = `${bucket.count === 0 ? 0 : Math.max(5, (bucket.count / maxCount) * 100)}%`;
-    track.append(fill);
-    const count = document.createElement('span');
-    count.className = 'chart-count';
-    count.textContent = String(bucket.count);
-    row.append(label, track, count);
-    elements.chartBars.append(row);
+  const axis = calculateCountAxis(Math.max(0, ...buckets.map(bucket => bucket.count)));
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 360 200');
+  svg.setAttribute('class', 'analytics-chart-svg consumption-chart-svg');
+  svg.dataset.chartRange = range;
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `Registrazioni per periodo: ${buckets.map(bucket => `${bucket.label}: ${formatNumber(bucket.count)}`).join(', ')}`);
+  const defs = createChartSvgElement(svg, 'defs');
+  const gradient = createChartSvgElement(svg, 'linearGradient', {
+    id: 'consumption-bar-gradient', x1: '0%', y1: '100%', x2: '0%', y2: '0%'
+  });
+  gradient.append(
+    createChartSvgElement(svg, 'stop', { offset: '0%', 'stop-color': '#408e75' }),
+    createChartSvgElement(svg, 'stop', { offset: '100%', 'stop-color': '#66e0b3' })
+  );
+  defs.append(gradient);
+  svg.append(defs);
+  const plot = { left: 38, right: 354, top: 16, bottom: 145 };
+  const plotHeight = plot.bottom - plot.top;
+  const plotWidth = plot.right - plot.left;
+  for (const tick of axis.ticks) {
+    const y = plot.bottom - (tick / axis.max) * plotHeight;
+    svg.append(createChartSvgElement(svg, 'line', {
+      x1: plot.left, x2: plot.right, y1: y, y2: y, class: 'analytics-gridline'
+    }));
+    const tickLabel = createChartSvgElement(svg, 'text', {
+      x: plot.left - 7, y: y + 3, class: 'analytics-axis-label analytics-y-label'
+    });
+    tickLabel.textContent = formatNumber(tick);
+    svg.append(tickLabel);
   }
+  svg.append(createChartSvgElement(svg, 'line', {
+    x1: plot.left, x2: plot.right, y1: plot.bottom, y2: plot.bottom, class: 'analytics-baseline'
+  }));
+
+  const slotWidth = plotWidth / buckets.length;
+  const barWidth = Math.min(25, Math.max(8, slotWidth * 0.58));
+  buckets.forEach((bucket, index) => {
+    const center = plot.left + slotWidth * (index + 0.5);
+    const barHeight = (bucket.count / axis.max) * plotHeight;
+    const bar = createChartSvgElement(svg, 'rect', {
+      x: center - barWidth / 2,
+      y: plot.bottom - barHeight,
+      width: barWidth,
+      height: barHeight,
+      rx: Math.min(5, barWidth / 3),
+      class: 'analytics-bar'
+    });
+    const title = createChartSvgElement(svg, 'title');
+    title.textContent = `${bucket.label}: ${formatNumber(bucket.count)} ${bucket.count === 1 ? 'registrazione' : 'registrazioni'}`;
+    bar.append(title);
+    svg.append(bar);
+
+    if (bucket.count > 0) {
+      const valueLabel = createChartSvgElement(svg, 'text', {
+        x: center,
+        y: Math.max(plot.top - 4, plot.bottom - barHeight - 6),
+        class: 'analytics-value-label'
+      });
+      valueLabel.textContent = formatNumber(bucket.count);
+      svg.append(valueLabel);
+    }
+
+    const [primaryLabel, secondaryLabel] = chartBucketLabels(range, bucket);
+    const label = createChartSvgElement(svg, 'text', {
+      x: center,
+      y: 166,
+      class: 'analytics-axis-label analytics-x-label'
+    });
+    label.textContent = primaryLabel;
+    svg.append(label);
+    if (secondaryLabel) {
+      const secondary = createChartSvgElement(svg, 'text', {
+        x: center,
+        y: 178,
+        class: 'analytics-axis-label analytics-x-label analytics-x-sub-label'
+      });
+      secondary.textContent = secondaryLabel;
+      svg.append(secondary);
+    }
+  });
+
+  elements.chartBars.dataset.chartRange = range;
+  elements.chartBars.replaceChildren();
+  elements.chartBars.append(svg);
 
   const titles = {
-    day: ['Distribuzione di oggi', 'Per fascia oraria'],
-    week: ['Ultimi sette giorni', 'Registrazioni per giorno'],
-    month: ['Andamento del mese', 'Registrazioni per settimana del mese'],
-    year: ['Andamento dell’anno', 'Registrazioni per mese']
+    day: ['Distribuzione di oggi', 'Per fascia oraria', 'fascia'],
+    week: ['Ultimi sette giorni', 'Registrazioni per giorno', 'giorno'],
+    month: ['Andamento del mese', 'Registrazioni per settimana', 'settimana'],
+    year: ['Andamento dell’anno', 'Registrazioni per mese', 'mese']
   };
   elements.chartTitle.textContent = titles[range][0];
-  elements.chartSubtitle.textContent = titles[range][1];
+  const average = periodEvents.length / buckets.length;
+  elements.chartSubtitle.textContent = `${titles[range][1]} · media ${formatAverage(average)} per ${titles[range][2]}`;
   elements.chartTotalPill.textContent = `${formatNumber(periodEvents.length)} totali`;
   if (periodEvents.length === 0) {
     const note = document.createElement('p');
@@ -1234,13 +2637,26 @@ function createTimestampEditButton(kind, record, label) {
 }
 
 function renderHistory() {
-  const sorted = [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  const visible = sorted.slice(0, MAX_RECENT_EVENTS);
+  const now = new Date();
+  const rangeStart = historyRangeFilter === 'all' ? null : startOfRange(historyRangeFilter, now);
+  const rangeEnd = historyRangeFilter === 'all' ? null : endOfRange(historyRangeFilter, now);
+  const records = [
+    ...events.map(record => ({ ...record, kind: 'event' })),
+    ...purchases.map(record => ({ ...record, kind: 'purchase' }))
+  ].filter(record => historyKindFilter === 'all' || record.kind === historyKindFilter)
+    .filter(record => !rangeStart || withinRange(record, rangeStart, rangeEnd))
+    .sort((first, second) => new Date(second.timestamp) - new Date(first.timestamp));
+  const visible = records.slice(0, historyVisibleCount);
   elements.historyList.replaceChildren();
-  elements.historyCount.textContent = `${formatNumber(events.length)} ${events.length === 1 ? 'evento' : 'eventi'}`;
-  elements.historyFootnote.textContent = events.length > MAX_RECENT_EVENTS
-    ? `Mostrate le ${MAX_RECENT_EVENTS} registrazioni più recenti su ${formatNumber(events.length)}. Esporta un CSV per consultare l’intero storico.`
-    : 'Puoi modificare data e ora o rimuovere una registrazione.';
+  elements.historyCount.textContent = `${formatNumber(records.length)} attività`;
+  elements.historyFootnote.textContent = records.length > visible.length
+    ? `Mostrate ${formatNumber(visible.length)} di ${formatNumber(records.length)} attività.`
+    : 'Puoi modificare data e ora o rimuovere un’attività.';
+  const remaining = records.length - visible.length;
+  elements.historyLoadMore.hidden = remaining <= 0;
+  elements.historyLoadMore.textContent = remaining > 0
+    ? `Mostra altre ${formatNumber(Math.min(HISTORY_PAGE_SIZE, remaining))}`
+    : 'Mostra altre attività';
 
   if (visible.length === 0) {
     const empty = document.createElement('div');
@@ -1250,22 +2666,25 @@ function renderHistory() {
     icon.setAttribute('aria-hidden', 'true');
     icon.textContent = '＋';
     const title = document.createElement('strong');
-    title.textContent = 'Ancora nessuna registrazione';
+    title.textContent = records.length === 0 ? 'Nessuna attività in questo periodo' : 'Ancora nessuna attività';
     const description = document.createElement('p');
-    description.textContent = 'Quando aggiungerai una registrazione, la troverai qui.';
+    description.textContent = 'Le registrazioni e le spese compariranno qui.';
     empty.append(icon, title, description);
     elements.historyList.append(empty);
     return;
   }
 
-  for (const event of visible) {
-    const label = eventLabel(event.type);
+  for (const record of visible) {
+    const isPurchase = record.kind === 'purchase';
+    const label = isPurchase ? (PURCHASE_LABELS[record.type] || 'Acquisto') : eventLabel(record.type);
     const row = document.createElement('div');
-    row.className = 'history-item';
+    row.className = `history-item${isPurchase ? ` purchase-history-item expense-${record.type}` : ''}`;
     const icon = document.createElement('span');
-    icon.className = `history-type-icon ${event.type}`;
+    icon.className = `history-type-icon${isPurchase ? ' purchase-history-icon' : ` ${record.type}`}`;
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = event.type === 'cigarette' || event.type === 'half-cigarette' ? '↗' : event.type === 'puff' ? '▱' : '✳';
+    icon.textContent = isPurchase
+      ? '€'
+      : record.type === 'cigarette' || record.type === 'half-cigarette' ? '↗' : record.type === 'puff' ? '▱' : '✳';
     const main = document.createElement('div');
     main.className = 'history-item-main';
     const title = document.createElement('p');
@@ -1273,17 +2692,72 @@ function renderHistory() {
     title.textContent = label;
     const date = document.createElement('p');
     date.className = 'history-item-date';
-    date.textContent = formatDateTime(event.timestamp);
+    date.textContent = formatDateTime(record.timestamp);
     main.append(title, date);
+    if (isPurchase) {
+      const amount = document.createElement('strong');
+      amount.className = 'purchase-history-amount';
+      amount.textContent = formatCurrency(record.amountCents);
+      row.append(icon, main, amount, createTimestampEditButton('purchase', record, label));
+    } else {
+      row.append(icon, main, createTimestampEditButton('event', record, label));
+    }
     const remove = document.createElement('button');
     remove.className = 'delete-event';
     remove.type = 'button';
     remove.textContent = '−';
-    remove.setAttribute('aria-label', `Elimina registrazione: ${label}, ${formatDateTime(event.timestamp)}`);
-    remove.addEventListener('click', () => handleDeleteEvent(event));
-    row.append(icon, main, createTimestampEditButton('event', event, label), remove);
+    remove.setAttribute('aria-label', `Elimina ${isPurchase ? 'spesa' : 'registrazione'}: ${label}, ${formatDateTime(record.timestamp)}`);
+    remove.addEventListener('click', () => {
+      if (isPurchase) void handleDeletePurchase(record);
+      else void handleDeleteEvent(record);
+    });
+    row.append(remove);
     elements.historyList.append(row);
   }
+}
+
+function renderWeeklyInsights(now = new Date()) {
+  const isWeekly = activeRange === 'week';
+  elements.weeklyInsights.hidden = !isWeekly;
+  if (!isWeekly) return;
+
+  const currentStart = startOfRange('week', now);
+  const currentEnd = endOfRange('week', now);
+  const previousStart = addDays(currentStart, -7);
+  const currentEvents = events.filter(event => withinRange(event, currentStart, currentEnd));
+  const previousEvents = events.filter(event => withinRange(event, previousStart, currentStart));
+  const currentPurchases = purchases.filter(purchase => withinRange(purchase, currentStart, currentEnd));
+  const currentSpend = currentPurchases.reduce((total, purchase) => total + purchase.amountCents, 0);
+
+  elements.weeklyTotal.textContent = formatNumber(currentEvents.length);
+  elements.weeklySpend.textContent = formatCurrency(currentSpend);
+  elements.weeklyDailySpend.textContent = `${formatCurrency(Math.round(currentSpend / 7))} al giorno`;
+  if (previousEvents.length === 0) {
+    elements.weeklyChange.textContent = currentEvents.length === 0
+      ? 'Nessun dato nei periodi confrontati'
+      : 'Nuove registrazioni rispetto al periodo precedente';
+  } else {
+    const difference = Math.round(((currentEvents.length - previousEvents.length) / previousEvents.length) * 100);
+    const direction = difference < 0 ? 'in meno' : difference > 0 ? 'in più' : 'in linea';
+    elements.weeklyChange.textContent = `${Math.abs(difference)}% ${direction} rispetto ai 7 giorni precedenti`;
+  }
+
+  const timeCounts = Array(4).fill(0);
+  const weekdayCounts = Array(7).fill(0);
+  for (const event of currentEvents) {
+    const date = new Date(event.timestamp);
+    if (!Number.isFinite(date.getTime())) continue;
+    timeCounts[Math.floor(date.getHours() / 6)] += 1;
+    weekdayCounts[date.getDay()] += 1;
+  }
+  const peakTime = Math.max(...timeCounts);
+  const peakDay = Math.max(...weekdayCounts);
+  elements.weeklyPeakTime.textContent = peakTime === 0
+    ? '—'
+    : `${String(timeCounts.indexOf(peakTime) * 6).padStart(2, '0')}–${String(timeCounts.indexOf(peakTime) * 6 + 6).padStart(2, '0')}`;
+  elements.weeklyPeakDay.textContent = peakDay === 0
+    ? '—'
+    : capitalizeFirst(new Intl.DateTimeFormat('it-IT', { weekday: 'long' }).format(new Date(2024, 0, 7 + weekdayCounts.indexOf(peakDay))));
 }
 
 function render() {
@@ -1293,11 +2767,6 @@ function render() {
   const todayCounts = countTypes(todayEvents);
   elements.todayTotal.textContent = formatNumber(todayCounts.total);
   elements.todayTotalLabel.textContent = todayCounts.total === 1 ? 'registrazione' : 'registrazioni';
-  elements.todayCigarettes.textContent = formatNumber(todayCounts.cigarettes);
-  elements.todayJoints.textContent = formatNumber(todayCounts.joints);
-  elements.todayHalfCigarettes.textContent = formatNumber(todayCounts.halfCigarettes);
-  elements.todayPuzzetta.textContent = formatNumber(todayCounts.puzzetta);
-  elements.todayPuff.textContent = formatNumber(todayCounts.puff);
   const todayPurchases = purchases.filter(purchase => withinRange(purchase, startOfRange('day', now), endOfRange('day', now)));
   const todaySpendCents = todayPurchases.reduce((total, purchase) => total + purchase.amountCents, 0);
   elements.todayExpenseTotal.textContent = formatCurrency(todaySpendCents);
@@ -1311,15 +2780,13 @@ function render() {
   const counts = countTypes(periodEvents);
   elements.periodLabel.textContent = labels[activeRange];
   elements.periodTotal.textContent = formatNumber(counts.total);
-  elements.periodCigarettes.textContent = formatNumber(counts.cigarettes);
-  elements.periodJoints.textContent = formatNumber(counts.joints);
-  elements.periodHalfCigarettes.textContent = formatNumber(counts.halfCigarettes);
-  elements.periodPuzzetta.textContent = formatNumber(counts.puzzetta);
-  elements.periodPuff.textContent = formatNumber(counts.puff);
-  renderExpenseSummary(periodPurchases);
+  renderCategoryControls(todayCounts, counts);
+  renderCategoryManager();
+  renderExpenseSummary(periodPurchases, now);
   renderChart(activeRange, periodEvents, now);
+  renderWeeklyInsights(now);
+  renderInsights(now);
   renderHistory();
-  renderPurchaseHistory();
   if (activeCategoryDetails && elements.categoryDetailsDialog.open) renderCategoryDetails();
 }
 
@@ -1327,7 +2794,7 @@ function loadStatsPreferences() {
   try {
     const savedPreferences = JSON.parse(localStorage.getItem(STATS_PREFERENCES_KEY) || '{}');
     if (['day', 'week', 'month', 'year'].includes(savedPreferences.range)) activeRange = savedPreferences.range;
-    if (savedPreferences.view === 'expenses' || savedPreferences.view === 'consumption') {
+    if (['expenses', 'consumption', 'insights'].includes(savedPreferences.view)) {
       activeStatsView = savedPreferences.view;
     }
   } catch (error) {
@@ -1357,10 +2824,12 @@ function updateRangeButtons() {
 }
 
 function setStatsView(view, persist = true) {
-  if (view !== 'expenses' && view !== 'consumption') return;
+  if (!['expenses', 'consumption', 'insights'].includes(view)) return;
   activeStatsView = view;
   elements.expenseView.hidden = view !== 'expenses';
   elements.consumptionView.hidden = view !== 'consumption';
+  document.getElementById('insights-view').hidden = view !== 'insights';
+  document.getElementById('stats-range-switch').hidden = view === 'insights';
   document.querySelectorAll('[data-stats-view]').forEach(button => {
     const selected = button.dataset.statsView === view;
     button.classList.toggle('is-active', selected);
@@ -1369,13 +2838,265 @@ function setStatsView(view, persist = true) {
   if (persist) saveStatsPreferences();
 }
 
-function renderExpenseSummary(periodPurchases) {
+function setAppPage(page) {
+  const pages = [...document.querySelectorAll('[data-app-page]')];
+  if (!pages.some(item => item.dataset.appPage === page)) return;
+  for (const item of pages) {
+    item.hidden = item.dataset.appPage !== page;
+  }
+  document.querySelectorAll('[data-page-target]').forEach(button => {
+    const selected = button.dataset.pageTarget === page;
+    button.classList.toggle('is-active', selected);
+    if (selected) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+  window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+}
+
+let goalsFormOwner = null;
+let goalsCategorySignature = '';
+const GOALS_KEY = 'smokelog-goals-v1:';
+
+function readGoals() {
+  try {
+    return SmokeLogInsights.validateGoals(JSON.parse(localStorage.getItem(GOALS_KEY + activeOwnerId) || '{}'));
+  } catch (error) {
+    return SmokeLogInsights.validateGoals({});
+  }
+}
+
+function renderInsights(now = new Date()) {
+  const goals = readGoals();
+  const node = id => document.getElementById(id);
+  const signature = JSON.stringify(categories.map(({ id, name }) => [id, name]));
+  const ownerChanged = goalsFormOwner !== activeOwnerId;
+  if (ownerChanged || signature !== goalsCategorySignature) {
+    const selected = ownerChanged ? goals.category : node('goal-category').value;
+    node('goal-category').replaceChildren(new Option('Tutte le categorie', 'all'), ...categories.map(category => new Option(category.name, category.id)));
+    node('goal-category').value = categories.some(category => category.id === selected) ? selected : 'all';
+    goalsCategorySignature = signature;
+  }
+  if (ownerChanged) {
+    node('goal-budget').value = goals.budget ?? '';
+    node('goal-limit').value = goals.limit ?? '';
+    node('savings-reduction').value = goals.reduction;
+    node('goals-status').textContent = '';
+    goalsFormOwner = activeOwnerId;
+  }
+  const data = SmokeLogInsights.calculate(events, purchases, now, goals.category);
+  const selectedLabel = goals.category === 'all' ? 'tutte le categorie' : eventLabel(goals.category);
+  node('insight-period').textContent = `${formatDateShort(data.from)} – ${formatDateShort(data.to)} · ${selectedLabel}`;
+  node('insight-month-spend').textContent = formatCurrency(data.monthSpend);
+  node('insight-daily-spend').textContent = formatCurrency(Math.round(data.dailySpend));
+  const delta = (value, current, previous) => previous === 0 ? (current === 0 ? 'Nessun dato' : 'Primo confronto') : `${value > 0 ? '+' : ''}${value}%`;
+  node('insight-change').textContent = delta(data.countChange, data.currentCount, data.previousCount);
+  node('insight-change-detail').textContent = `${data.currentCount} registrazioni contro ${data.previousCount} · ultimi 7 giorni completi / 7 precedenti`;
+  node('insight-spend-change').textContent = delta(data.spendChange, data.lastWeekSpend, data.previousWeekSpend);
+  node('insight-spend-detail').textContent = `${formatCurrency(data.lastWeekSpend)} contro ${formatCurrency(data.previousWeekSpend)} · tutte le spese, stessi periodi`;
+  const hours = ['00–06', '06–12', '12–18', '18–24'];
+  const weekdays = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
+  node('insight-hours').replaceChildren(...data.hourly.map((count, index) => {
+    const row = document.createElement('div');
+    row.className = 'insight-hour-row';
+    const label = document.createElement('span');
+    label.textContent = hours[index];
+    const meter = document.createElement('progress');
+    meter.max = Math.max(1, ...data.hourly);
+    meter.value = count;
+    meter.setAttribute('aria-label', `${hours[index]}: ${count} registrazioni`);
+    const value = document.createElement('strong');
+    value.textContent = count;
+    row.append(label, meter, value);
+    return row;
+  }));
+  node('insight-peaks').textContent = data.observationCount
+    ? `Fasce più attive: ${data.peakTimes.map(index => hours[index]).join(', ')}. Giorni più attivi: ${data.peakDays.map(index => weekdays[index]).join(', ')}.`
+    : 'Nessuna registrazione nei 28 giorni completi. Le abitudini compariranno qui con il tuo storico.';
+  const progress = node('goal-progress');
+  progress.replaceChildren();
+  const addProgress = (label, value, target, description) => {
+    const card = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = label;
+    const bar = document.createElement('progress');
+    bar.max = Math.max(1, target);
+    bar.value = Math.min(bar.max, value);
+    bar.setAttribute('aria-label', description);
+    const text = document.createElement('small');
+    text.textContent = description;
+    if (value > target) card.className = 'goal-over';
+    card.append(title, bar, text);
+    progress.append(card);
+  };
+  if (goals.budget !== null) {
+    const budget = Math.round(goals.budget * 100);
+    const remaining = budget - data.monthSpend;
+    addProgress('Budget del mese', data.monthSpend, budget,
+      `${formatCurrency(data.monthSpend)} di ${formatCurrency(budget)} · ${remaining >= 0 ? 'disponibili' : 'oltre il budget'} ${formatCurrency(Math.abs(remaining))}`);
+  }
+  if (goals.limit !== null) addProgress(`Registrazioni di oggi · ${selectedLabel}`, data.todayCount, goals.limit,
+    `${data.todayCount} di ${goals.limit} · ${data.todayCount <= goals.limit ? 'entro il limite scelto' : 'oltre il limite scelto'}`);
+  if (goals.limit === null && goals.budget === null) {
+    const text = document.createElement('p');
+    text.className = 'microcopy';
+    text.textContent = 'Nessun obiettivo impostato. Puoi iniziare dal budget, da un limite giornaliero o da entrambi.';
+    progress.append(text);
+  }
+  renderSavings(data);
+}
+
+function renderSavings(data = SmokeLogInsights.calculate(events, purchases)) {
+  const reduction = Number(document.getElementById('savings-reduction').value);
+  const estimate = SmokeLogInsights.savings(data.last28Spend, reduction);
+  document.getElementById('savings-percent').textContent = `${reduction}%`;
+  document.getElementById('savings-month').textContent = data.purchaseCount ? formatCurrency(estimate.monthly) : '—';
+  document.getElementById('savings-year').textContent = data.purchaseCount ? formatCurrency(estimate.yearly) : '—';
+  document.getElementById('savings-context').textContent = data.purchaseCount
+    ? `Base di calcolo: ${formatCurrency(data.last28Spend)} in ${data.purchaseCount} acquisti, su 28 giorni. Comprende tutte le categorie di spesa.`
+    : 'Servono acquisti registrati nei giorni precedenti per stimare il risparmio. Gli acquisti di oggi entreranno nel calcolo domani.';
+}
+
+function setupGoals() {
+  document.getElementById('savings-reduction').addEventListener('input', () => renderSavings());
+  document.getElementById('savings-reduction').addEventListener('change', () => {
+    try {
+      localStorage.setItem(GOALS_KEY + activeOwnerId, JSON.stringify({ ...readGoals(), reduction: Number(document.getElementById('savings-reduction').value) }));
+    } catch (error) { showToast('Simulazione aggiornata, ma preferenza non salvata.', 'error'); }
+  });
+  document.getElementById('goals-form').addEventListener('submit', event => {
+    event.preventDefault();
+    try {
+      const goals = SmokeLogInsights.validateGoals({
+        budget: document.getElementById('goal-budget').value,
+        limit: document.getElementById('goal-limit').value,
+        category: document.getElementById('goal-category').value,
+        reduction: document.getElementById('savings-reduction').value
+      });
+      localStorage.setItem(GOALS_KEY + activeOwnerId, JSON.stringify(goals));
+      renderInsights();
+      document.getElementById('goals-status').textContent = 'Obiettivi salvati su questo dispositivo.';
+    } catch (error) { document.getElementById('goals-status').textContent = error.message || 'Impossibile salvare gli obiettivi.'; }
+  });
+  document.getElementById('reset-goals').addEventListener('click', () => {
+    try {
+      localStorage.removeItem(GOALS_KEY + activeOwnerId);
+      goalsFormOwner = null;
+      renderInsights();
+      document.getElementById('goals-status').textContent = 'Obiettivi rimossi.';
+    } catch (error) { showToast('Impossibile rimuovere gli obiettivi.', 'error'); }
+  });
+}
+
+function renderExpenseTrend(periodPurchases, now) {
+  const buckets = makeBuckets(activeRange, now);
+  for (const bucket of buckets) {
+    bucket.amountCents = periodPurchases
+      .filter(purchase => withinRange(purchase, bucket.start, bucket.end))
+      .reduce((sum, purchase) => sum + purchase.amountCents, 0);
+  }
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 360 200');
+  svg.setAttribute('class', 'analytics-chart-svg expense-trend-svg');
+  svg.dataset.chartRange = activeRange;
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `Spesa per periodo: ${buckets.map(bucket => `${bucket.label} ${formatCurrency(bucket.amountCents)}`).join(', ')}`);
+
+  const plot = { left: 45, right: 354, top: 16, bottom: 145 };
+  const maxEuros = Math.max(0, ...buckets.map(bucket => bucket.amountCents / 100));
+  const axis = calculateAxis(maxEuros || 4);
+  const plotHeight = plot.bottom - plot.top;
+  const plotWidth = plot.right - plot.left;
+  const currencyFormatter = new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 });
+  for (const tick of axis.ticks) {
+    const y = plot.bottom - (tick / axis.max) * plotHeight;
+    svg.append(createChartSvgElement(svg, 'line', {
+      x1: plot.left, x2: plot.right, y1: y, y2: y, class: 'analytics-gridline'
+    }));
+    const tickLabel = createChartSvgElement(svg, 'text', {
+      x: plot.left - 7, y: y + 3, class: 'analytics-axis-label analytics-y-label'
+    });
+    tickLabel.textContent = `€${currencyFormatter.format(tick)}`;
+    svg.append(tickLabel);
+  }
+  svg.append(createChartSvgElement(svg, 'line', {
+    x1: plot.left, x2: plot.right, y1: plot.bottom, y2: plot.bottom, class: 'analytics-baseline'
+  }));
+
+  const points = buckets.map((bucket, index) => {
+    const x = buckets.length === 1
+      ? (plot.left + plot.right) / 2
+      : plot.left + ((plot.right - plot.left) * index) / (buckets.length - 1);
+    const y = plot.bottom - ((bucket.amountCents / 100) / axis.max) * plotHeight;
+    return { x, y, bucket };
+  });
+  const area = createChartSvgElement(svg, 'polygon', {
+    points: `${points[0].x},${plot.bottom} ${points.map(point => `${point.x},${point.y}`).join(' ')} ${points[points.length - 1].x},${plot.bottom}`,
+    class: 'expense-trend-area'
+  });
+  svg.append(area);
+  svg.append(createChartSvgElement(svg, 'polyline', {
+    points: points.map(point => `${point.x},${point.y}`).join(' '),
+    class: 'expense-trend-line'
+  }));
+
+  const maxPointIndex = points.reduce((bestIndex, candidate, candidateIndex) =>
+    candidate.bucket.amountCents > points[bestIndex].bucket.amountCents ? candidateIndex : bestIndex, 0);
+  points.forEach((point, index) => {
+    const marker = createChartSvgElement(svg, 'circle', {
+      cx: point.x, cy: point.y, r: 3.5, class: 'expense-trend-point'
+    });
+    const title = createChartSvgElement(svg, 'title');
+    title.textContent = `${point.bucket.label}: ${formatCurrency(point.bucket.amountCents)}`;
+    marker.append(title);
+    svg.append(marker);
+
+    if (point.bucket.amountCents > 0
+      && (buckets.length <= 7 || index === 0 || index === buckets.length - 1 || index === maxPointIndex)) {
+      const valueLabel = createChartSvgElement(svg, 'text', {
+        x: point.x,
+        y: Math.max(plot.top - 5, point.y - 9),
+        class: 'expense-trend-value'
+      });
+      valueLabel.textContent = formatCurrency(point.bucket.amountCents);
+      svg.append(valueLabel);
+    }
+
+    const [primaryLabel, secondaryLabel] = chartBucketLabels(activeRange, point.bucket);
+    const label = createChartSvgElement(svg, 'text', {
+      x: point.x, y: 166, class: 'analytics-axis-label analytics-x-label'
+    });
+    label.textContent = primaryLabel;
+    svg.append(label);
+    if (secondaryLabel) {
+      const secondary = createChartSvgElement(svg, 'text', {
+        x: point.x, y: 178, class: 'analytics-axis-label analytics-x-label analytics-x-sub-label'
+      });
+      secondary.textContent = secondaryLabel;
+      svg.append(secondary);
+    }
+  });
+
+  elements.expenseTrendChart.replaceChildren(svg);
+  const periodUnit = { day: 'fascia', week: 'giorno', month: 'settimana', year: 'mese' }[activeRange];
+  const averageCents = periodPurchases.reduce((sum, purchase) => sum + purchase.amountCents, 0) / buckets.length;
+  elements.expenseTrendSubtitle.textContent = `Totale per periodo · media ${formatCurrency(averageCents)} per ${periodUnit}`;
+  if (periodPurchases.length === 0) {
+    const note = document.createElement('p');
+    note.className = 'chart-empty-note';
+    note.textContent = 'Nessuna spesa in questo periodo. Il grafico si aggiornerà quando registrerai un acquisto.';
+    elements.expenseTrendChart.append(note);
+  }
+}
+
+function renderExpenseSummary(periodPurchases, now = new Date()) {
   const totals = Object.fromEntries(Object.keys(PURCHASE_LABELS).map(type => [type, 0]));
   for (const purchase of periodPurchases) {
     if (Object.hasOwn(totals, purchase.type)) totals[purchase.type] += purchase.amountCents;
   }
   const totalCents = periodPurchases.reduce((total, purchase) => total + purchase.amountCents, 0);
   elements.periodExpenseTotal.textContent = formatCurrency(totalCents);
+  renderExpenseTrend(periodPurchases, now);
   elements.expenseCategoryGrid.replaceChildren();
   for (const [type, label] of Object.entries(PURCHASE_LABELS)) {
     const card = document.createElement('button');
@@ -1421,7 +3142,9 @@ function renderExpenseSummary(periodPurchases) {
 }
 
 function openCategoryDetails(kind, type) {
-  const labels = kind === 'event' ? EVENT_CATEGORY_LABELS : PURCHASE_LABELS;
+  const labels = kind === 'event'
+    ? Object.fromEntries(categories.map(category => [category.id, category.name]))
+    : PURCHASE_LABELS;
   if (!Object.hasOwn(labels, type)) return;
   activeCategoryDetails = { kind, type };
   renderCategoryDetails();
@@ -1431,7 +3154,9 @@ function openCategoryDetails(kind, type) {
 function renderCategoryDetails() {
   if (!activeCategoryDetails) return;
   const { kind, type } = activeCategoryDetails;
-  const labels = kind === 'event' ? EVENT_CATEGORY_LABELS : PURCHASE_LABELS;
+  const labels = kind === 'event'
+    ? Object.fromEntries(categories.map(category => [category.id, category.name]))
+    : PURCHASE_LABELS;
   const rangeLabels = { day: 'oggi', week: 'negli ultimi 7 giorni', month: 'nel mese', year: 'nell’anno' };
   const now = new Date();
   const rangeStart = startOfRange(activeRange, now);
@@ -1498,67 +3223,11 @@ function resumeCategoryDetails(details) {
   elements.categoryDetailsDialog.showModal();
 }
 
-function renderPurchaseHistory() {
-  const sorted = [...purchases].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  const visible = sorted.slice(0, MAX_RECENT_EVENTS);
-  elements.purchaseHistoryList.replaceChildren();
-  elements.purchaseHistoryCount.textContent = `${formatNumber(purchases.length)} ${purchases.length === 1 ? 'acquisto' : 'acquisti'}`;
-  elements.purchaseHistoryFootnote.textContent = purchases.length > MAX_RECENT_EVENTS
-    ? `Mostrati gli ${MAX_RECENT_EVENTS} acquisti più recenti su ${formatNumber(purchases.length)}.`
-    : 'Puoi modificare data e ora o rimuovere un acquisto.';
-  if (visible.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty-state';
-    const icon = document.createElement('span');
-    icon.className = 'empty-icon';
-    icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = '€';
-    const title = document.createElement('strong');
-    title.textContent = 'Ancora nessun acquisto';
-    const description = document.createElement('p');
-    description.textContent = 'Gli acquisti e gli importi che inserirai compariranno qui.';
-    empty.append(icon, title, description);
-    elements.purchaseHistoryList.append(empty);
-    return;
-  }
-  for (const purchase of visible) {
-    const label = PURCHASE_LABELS[purchase.type] || 'Acquisto';
-    const row = document.createElement('div');
-    row.className = `history-item purchase-history-item expense-${purchase.type}`;
-    const icon = document.createElement('span');
-    icon.className = 'history-type-icon purchase-history-icon';
-    icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = '€';
-    const main = document.createElement('div');
-    main.className = 'history-item-main';
-    const title = document.createElement('p');
-    title.className = 'history-item-title';
-    title.textContent = label;
-    const date = document.createElement('p');
-    date.className = 'history-item-date';
-    date.textContent = formatDateTime(purchase.timestamp);
-    main.append(title, date);
-    const amount = document.createElement('strong');
-    amount.className = 'purchase-history-amount';
-    amount.textContent = formatCurrency(purchase.amountCents);
-    const remove = document.createElement('button');
-    remove.className = 'delete-event';
-    remove.type = 'button';
-    remove.textContent = '−';
-    remove.setAttribute('aria-label', `Elimina acquisto: ${label}, ${formatCurrency(purchase.amountCents)}`);
-    remove.addEventListener('click', () => void handleDeletePurchase(purchase));
-    row.append(icon, main, amount, createTimestampEditButton('purchase', purchase, label), remove);
-    elements.purchaseHistoryList.append(row);
-  }
-}
-
 function openTimestampDialog(kind, record) {
-  if (!isAuthenticated) {
-    openAuthenticationModal();
-    return;
-  }
   if (elements.timestampDialog.open) return;
-  const labels = kind === 'event' ? EVENT_LABELS : PURCHASE_LABELS;
+  const labels = kind === 'event'
+    ? Object.fromEntries(categories.map(category => [category.id, category.name]))
+    : PURCHASE_LABELS;
   const categoryDetails = suspendCategoryDetails();
   activeTimestampEdit = { kind, id: record.id, categoryDetails };
   elements.timestampDialogTitle.textContent = labels[record.type] || 'Registrazione';
@@ -1602,20 +3271,15 @@ async function saveTimestampEdit() {
     return;
   }
 
-  const updatedRecord = { ...currentRecord, timestamp: date.toISOString() };
+  const updatedRecord = {
+    ...currentRecord,
+    timestamp: date.toISOString(),
+    updatedAt: new Date().toISOString(),
+    deletedAt: null
+  };
   elements.timestampSave.disabled = true;
   elements.timestampFormError.hidden = true;
-  let savedOnline = false;
   try {
-    if (cloudConfigured) {
-      const table = kind === 'event' ? 'smokelog_events' : 'smokelog_purchases';
-      await supabaseRequest(`${table}?id=eq.${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ timestamp: updatedRecord.timestamp })
-      });
-      savedOnline = true;
-    }
     if (kind === 'event') {
       await updateStoredEvent(updatedRecord);
       events = events.map(record => record.id === id ? updatedRecord : record)
@@ -1625,19 +3289,19 @@ async function saveTimestampEdit() {
       purchases = purchases.map(record => record.id === id ? updatedRecord : record)
         .sort((first, second) => new Date(second.timestamp) - new Date(first.timestamp));
     }
+    markLocalMutation();
 
     activeTimestampEdit = null;
     elements.timestampDialog.close();
     render();
     resumeCategoryDetails(categoryDetails);
     showToast('Data e ora aggiornate.');
+    requestCloudSync();
   } catch (error) {
     console.error(error);
     elements.timestampSave.disabled = false;
     const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
-    elements.timestampFormError.textContent = savedOnline
-      ? 'Data e ora aggiornate online, ma non è stato possibile aggiornare la copia su questo dispositivo.'
-      : `Non è stato possibile aggiornare data e ora.${detail}`;
+    elements.timestampFormError.textContent = `Non è stato possibile aggiornare data e ora sul dispositivo.${detail}`;
     elements.timestampFormError.hidden = false;
   }
 }
@@ -1674,82 +3338,65 @@ function openActionDialog({ title, message, confirmLabel = 'Conferma', cancelLab
 }
 
 async function handleAddEvent(type) {
-  if (!isAuthenticated) {
-    openAuthenticationModal();
+  const category = categories.find(item => item.id === type && item.isActive);
+  if (!category) {
+    showToast('Questa categoria non è disponibile. Aggiorna lo storico e riprova.', 'error');
     return;
   }
-  let uploaded = false;
   try {
-    const event = { id: makeId(), type, timestamp: new Date().toISOString() };
-    if (cloudConfigured) {
-      await uploadCloudEvents([event]);
-      uploaded = true;
-    }
+    const timestamp = new Date().toISOString();
+    const event = { id: makeId(), type, timestamp, updatedAt: timestamp, deletedAt: null };
     await persistEvent(event);
+    markLocalMutation();
     events.push(event);
     events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     render();
-    showToast(`${eventLabel(type)} registrat${type === 'joint' ? 'o' : 'a'}.`);
+    showToast(`${eventLabel(type)} registrata.`);
+    requestCloudSync();
   } catch (error) {
     console.error(error);
-    if (uploaded) {
-      showToast('Salvata online; aggiornamento locale non riuscito.', 'error');
-      return;
-    }
-    if (type === 'puff' && error instanceof Error && /smokelog_events_type_check|check constraint/i.test(error.message)) {
-      showToast('Cartuccia Puff non è ancora abilitata nel database. In Supabase → SQL Editor esegui di nuovo il file supabase-schema.sql aggiornato.', 'error');
-      return;
-    }
     const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
-    showToast(`Non salvata online: verifica la connessione e riprova.${detail}`, 'error');
+    showToast(`Registrazione non salvata sul dispositivo.${detail}`, 'error');
   }
 }
 
-function openPurchaseDialog(type) {
-  const label = PURCHASE_LABELS[type];
-  if (!label) throw new Error(`Categoria di acquisto non riconosciuta: ${type}`);
-  elements.purchaseDialogTitle.textContent = label;
+function openPurchaseDialog() {
+  elements.purchaseType.value = '';
   elements.purchaseAmount.value = '';
   elements.purchaseAmount.setCustomValidity('');
   elements.purchaseFormError.hidden = true;
   elements.purchaseDialog.returnValue = '';
   elements.purchaseDialog.showModal();
-  window.requestAnimationFrame(() => elements.purchaseAmount.focus());
+  window.requestAnimationFrame(() => elements.purchaseType.focus());
   return new Promise(resolve => {
     elements.purchaseDialog.addEventListener('close', () => {
-      const amountCents = Number(elements.purchaseDialog.returnValue);
-      resolve(Number.isSafeInteger(amountCents) && amountCents > 0 ? amountCents : null);
+      const [type, amountText] = elements.purchaseDialog.returnValue.split(':');
+      const amountCents = Number(amountText);
+      resolve(Object.hasOwn(PURCHASE_LABELS, type) && Number.isSafeInteger(amountCents) && amountCents > 0
+        ? { type, amountCents }
+        : null);
     }, { once: true });
   });
 }
 
-async function handleAddPurchase(type) {
-  if (!isAuthenticated) {
-    openAuthenticationModal();
-    return;
-  }
-  let uploaded = false;
+async function handleAddPurchase() {
   try {
-    const amountCents = await openPurchaseDialog(type);
-    if (amountCents === null) return;
-    const purchase = { id: makeId(), type, amountCents, timestamp: new Date().toISOString() };
-    if (cloudConfigured) {
-      await uploadCloudPurchases([purchase]);
-      uploaded = true;
-    }
+    const selection = await openPurchaseDialog();
+    if (selection === null) return;
+    const { type, amountCents } = selection;
+    const timestamp = new Date().toISOString();
+    const purchase = { id: makeId(), type, amountCents, timestamp, updatedAt: timestamp, deletedAt: null };
     await persistPurchase(purchase);
+    markLocalMutation();
     purchases.push(purchase);
     purchases.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     render();
     showToast(`${PURCHASE_LABELS[type]} registrato: ${formatCurrency(amountCents)}.`);
+    requestCloudSync();
   } catch (error) {
     console.error(error);
-    if (uploaded) {
-      showToast('Acquisto salvato online; aggiornamento locale non riuscito.', 'error');
-      return;
-    }
     const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
-    showToast(`Acquisto non salvato: verifica la connessione e riprova.${detail}`, 'error');
+    showToast(`Spesa non salvata sul dispositivo.${detail}`, 'error');
   }
 }
 
@@ -1758,7 +3405,7 @@ async function handleDeletePurchase(purchase) {
   const categoryDetails = suspendCategoryDetails();
   const approved = await openActionDialog({
     title: 'Eliminare questo acquisto?',
-    message: `${label} · ${formatCurrency(purchase.amountCents)} · ${formatDateTime(purchase.timestamp)}. La spesa verrà rimossa dallo storico sincronizzato.`,
+    message: `${label} · ${formatCurrency(purchase.amountCents)} · ${formatDateTime(purchase.timestamp)}. La spesa verrà rimossa dallo storico e sincronizzata quando possibile.`,
     confirmLabel: 'Sì, elimina',
     danger: true
   });
@@ -1767,14 +3414,14 @@ async function handleDeletePurchase(purchase) {
     return;
   }
   try {
-    if (cloudConfigured) {
-      await supabaseRequest(`smokelog_purchases?id=eq.${encodeURIComponent(purchase.id)}`, { method: 'DELETE' });
-    }
-    await removePurchase(purchase.id);
+    const deletedAt = new Date().toISOString();
+    await updateStoredPurchase({ ...purchase, updatedAt: deletedAt, deletedAt });
+    markLocalMutation();
     purchases = purchases.filter(item => item.id !== purchase.id);
     render();
     resumeCategoryDetails(categoryDetails);
     showToast('Acquisto eliminato.');
+    requestCloudSync();
   } catch (error) {
     console.error(error);
     resumeCategoryDetails(categoryDetails);
@@ -1783,15 +3430,11 @@ async function handleDeletePurchase(purchase) {
 }
 
 async function handleDeleteEvent(event) {
-  if (!isAuthenticated) {
-    openAuthenticationModal();
-    return;
-  }
   const typeLabel = eventLabel(event.type);
   const categoryDetails = suspendCategoryDetails();
   const approved = await openActionDialog({
     title: 'Sicuro che non l’hai fumata?',
-    message: `${typeLabel} · ${formatDateTime(event.timestamp)}. La registrazione verrà rimossa dallo storico sincronizzato.`,
+    message: `${typeLabel} · ${formatDateTime(event.timestamp)}. La registrazione verrà rimossa dallo storico e sincronizzata quando possibile.`,
     confirmLabel: 'Sì, elimina',
     danger: true
   });
@@ -1800,14 +3443,14 @@ async function handleDeleteEvent(event) {
     return;
   }
   try {
-    if (cloudConfigured) {
-      await supabaseRequest(`smokelog_events?id=eq.${encodeURIComponent(event.id)}`, { method: 'DELETE' });
-    }
-    await removeEvent(event.id);
+    const deletedAt = new Date().toISOString();
+    await updateStoredEvent({ ...event, updatedAt: deletedAt, deletedAt });
+    markLocalMutation();
     events = events.filter(item => item.id !== event.id);
     render();
     resumeCategoryDetails(categoryDetails);
     showToast('Registrazione eliminata.');
+    requestCloudSync();
   } catch (error) {
     console.error(error);
     resumeCategoryDetails(categoryDetails);
@@ -1829,16 +3472,15 @@ function downloadFile(filename, content, mimeType) {
 }
 
 function exportJson() {
-  if (!isAuthenticated) {
-    openAuthenticationModal();
-    return;
-  }
   const backup = {
     app: 'SmokeLog',
-    schemaVersion: 2,
+    schemaVersion: 3,
     exportedAt: new Date().toISOString(),
     events: [...events].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)),
-    purchases: [...purchases].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    purchases: [...purchases].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)),
+    categories: categories.map(({ id, name, color, position, isActive, updatedAt }) => ({
+      id, name, color, position, isActive, updatedAt
+    }))
   };
   downloadFile(`smokelog-backup-${localDateKey(new Date())}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8');
   showToast('Backup JSON preparato. Salvalo in un luogo sicuro.');
@@ -1850,10 +3492,6 @@ function csvEscape(value) {
 }
 
 function exportCsv() {
-  if (!isAuthenticated) {
-    openAuthenticationModal();
-    return;
-  }
   const rows = [['id', 'tipo', 'importo_eur', 'data_ora_iso', 'data_locale', 'ora_locale']];
   const sorted = [...events].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   for (const event of sorted) {
@@ -1885,22 +3523,75 @@ function exportCsv() {
 }
 
 function validateBackup(parsed) {
-  if (!parsed || parsed.app !== 'SmokeLog' || ![1, 2].includes(parsed.schemaVersion) || !Array.isArray(parsed.events)
-    || (parsed.schemaVersion === 2 && !Array.isArray(parsed.purchases))) {
-    throw new Error('Il file non sembra un backup SmokeLog valido.');
+  if (!parsed || parsed.app !== 'SmokeLog' || ![1, 2, 3].includes(parsed.schemaVersion) || !Array.isArray(parsed.events)
+    || (parsed.schemaVersion >= 2 && !Array.isArray(parsed.purchases))
+    || (parsed.schemaVersion === 3 && !Array.isArray(parsed.categories))) {
+    throw new Error('Il file non sembra un backup SmokeLOG valido.');
+  }
+  const exportedAt = typeof parsed.exportedAt === 'string' && Number.isFinite(Date.parse(parsed.exportedAt))
+    ? new Date(parsed.exportedAt).toISOString()
+    : null;
+  const normalizeBackupUpdatedAt = (value, fallback) => {
+    if (typeof value === 'string' && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
+    if (typeof fallback === 'string' && Number.isFinite(Date.parse(fallback))) return new Date(fallback).toISOString();
+    return exportedAt || new Date(0).toISOString();
+  };
+  const importedCategories = [];
+  const importedCategoryIds = new Set();
+  if (parsed.schemaVersion === 3) {
+    const importedNames = new Set();
+    for (const item of parsed.categories) {
+      const normalizedName = item && typeof item.name === 'string' ? item.name.trim() : '';
+      if (!item || typeof item.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,79}$/i.test(item.id)
+        || !normalizedName || normalizedName.length > 28
+        || importedCategoryIds.has(item.id)
+        || importedNames.has(normalizedName.toLocaleLowerCase('it-IT'))
+        || !Object.hasOwn(CATEGORY_COLORS, item.color)
+        || !Number.isInteger(item.position) || item.position < 0
+        || typeof item.isActive !== 'boolean'
+        || (item.updatedAt !== undefined && item.updatedAt !== null
+          && (typeof item.updatedAt !== 'string' || !Number.isFinite(Date.parse(item.updatedAt))))) {
+        throw new Error('Il backup contiene una categoria non valida. Nessun dato è stato modificato.');
+      }
+      importedCategoryIds.add(item.id);
+      importedNames.add(normalizedName.toLocaleLowerCase('it-IT'));
+      importedCategories.push({
+        id: item.id,
+        name: normalizedName,
+        color: item.color,
+        position: item.position,
+        isActive: item.isActive,
+        updatedAt: normalizeBackupUpdatedAt(item.updatedAt, exportedAt),
+        deletedAt: null,
+        pendingSync: false
+      });
+    }
   }
   const seen = new Set();
   const validated = [];
+  const allowedTypes = new Set([
+    ...Object.keys(EVENT_LABELS),
+    ...importedCategoryIds
+  ]);
   // Convalida l'intero file prima di modificare l'archivio corrente.
   for (const item of parsed.events) {
-    if (!item || typeof item.id !== 'string' || !Object.hasOwn(EVENT_LABELS, item.type) || typeof item.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp))) {
+    if (!item || typeof item.id !== 'string' || !allowedTypes.has(item.type) || typeof item.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp))
+      || (item.updatedAt !== undefined && item.updatedAt !== null
+        && (typeof item.updatedAt !== 'string' || !Number.isFinite(Date.parse(item.updatedAt))))) {
       throw new Error('Il backup contiene una registrazione non valida. Nessun dato è stato modificato.');
     }
     let id = item.id;
     if (seen.has(id)) id = makeId();
     seen.add(id);
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : makeId();
-    validated.push({ id: uuid, type: item.type, timestamp: new Date(item.timestamp).toISOString() });
+    const timestamp = new Date(item.timestamp).toISOString();
+    validated.push({
+      id: uuid,
+      type: item.type,
+      timestamp,
+      updatedAt: normalizeBackupUpdatedAt(item.updatedAt, timestamp),
+      deletedAt: null
+    });
   }
   const seenPurchaseIds = new Set();
   const validatedPurchases = [];
@@ -1908,52 +3599,77 @@ function validateBackup(parsed) {
     const amount = Number(item && item.amountCents);
     if (!item || typeof item.id !== 'string' || !Object.hasOwn(PURCHASE_LABELS, item.type)
       || !Number.isSafeInteger(amount) || amount < 1 || amount > 9999999999
-      || typeof item.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp))) {
+      || typeof item.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp))
+      || (item.updatedAt !== undefined && item.updatedAt !== null
+        && (typeof item.updatedAt !== 'string' || !Number.isFinite(Date.parse(item.updatedAt))))) {
       throw new Error('Il backup contiene un acquisto non valido. Nessun dato è stato modificato.');
     }
     let id = item.id;
     if (seenPurchaseIds.has(id)) id = makeId();
     seenPurchaseIds.add(id);
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : makeId();
-    validatedPurchases.push({ id: uuid, type: item.type, amountCents: amount, timestamp: new Date(item.timestamp).toISOString() });
+    const timestamp = new Date(item.timestamp).toISOString();
+    validatedPurchases.push({
+      id: uuid,
+      type: item.type,
+      amountCents: amount,
+      timestamp,
+      updatedAt: normalizeBackupUpdatedAt(item.updatedAt, timestamp),
+      deletedAt: null
+    });
   }
-  return { events: validated, purchases: validatedPurchases };
+  return { events: validated, purchases: validatedPurchases, categories: importedCategories };
 }
 
 async function importJsonFile(file) {
   if (!file) return;
   try {
-    if (!isAuthenticated) {
-      openAuthenticationModal();
-      return;
+    if (file.size > MAX_BACKUP_FILE_SIZE) {
+      throw new Error('Il backup è troppo grande. Seleziona un file più piccolo di 10 MB.');
     }
     const raw = await file.text();
     const parsed = JSON.parse(raw);
     const validated = validateBackup(parsed);
-    // L'importazione sostituisce lo storico locale e cloud, non lo unisce.
     const approved = await openActionDialog({
-      title: 'Sostituire lo storico?',
-      message: `Il backup contiene ${validated.events.length} registrazioni e ${validated.purchases.length} acquisti. Sostituirà consumi e spese attuali, anche quelli sincronizzati. Esporta prima un backup se vuoi conservarli.`,
+      title: 'Importare il backup?',
+      message: `Il backup contiene ${validated.events.length} registrazioni, ${validated.purchases.length} acquisti e ${validated.categories.length} categorie. I dati saranno uniti a quelli presenti, senza eliminare voci più recenti.`,
       confirmLabel: 'Importa backup',
-      danger: true
     });
     if (!approved) return;
-    if (cloudConfigured) {
-      await supabaseRequest('rpc/replace_smokelog_data', {
-        method: 'POST',
-        body: JSON.stringify({ p_events: validated.events, p_purchases: validated.purchases.map(purchase => ({
-          id: purchase.id,
-          type: purchase.type,
-          amount: purchase.amountCents / 100,
-          timestamp: purchase.timestamp
-        })) })
-      });
+    const [existingEvents, existingPurchases, existingCategories] = await Promise.all([
+      readAllEvents(activeOwnerId, true),
+      readAllPurchases(activeOwnerId, true),
+      readAllCategories(activeOwnerId, true)
+    ]);
+    for (const importedCategory of validated.categories) {
+      const duplicateName = existingCategories.some(category => category.id !== importedCategory.id
+        && category.name.toLocaleLowerCase('it-IT') === importedCategory.name.toLocaleLowerCase('it-IT'));
+      if (duplicateName) {
+        throw new Error(`Il backup contiene una categoria chiamata “${importedCategory.name}”, già presente con un ID diverso. Rinomina una delle categorie e riprova.`);
+      }
     }
-    await replaceAllEvents(validated.events);
-    await replaceAllPurchases(validated.purchases);
+    const mergedEvents = mergeById(existingEvents, validated.events);
+    const mergedPurchases = mergeById(existingPurchases, validated.purchases);
+    const mergedCategories = mergeById(existingCategories, validated.categories);
+    const committed = await commitArchive(activeOwnerId, [mergedEvents, mergedPurchases, mergedCategories]);
+    // A fallback from an earlier edit must not undo a genuinely newer import.
+    // Keep newer preferences, including edits made while the import was saving.
+    try {
+      const preferences = readCategoryPreferences();
+      const ownerPreferences = preferences[activeOwnerId] || {};
+      for (const category of committed[2]) {
+        const preference = ownerPreferences[category.id];
+        if (!category.pendingSync && preference && Date.parse(preference.updatedAt) < Date.parse(category.updatedAt)) delete ownerPreferences[category.id];
+      }
+      preferences[activeOwnerId] = ownerPreferences;
+      localStorage.setItem(CATEGORY_PREFERENCES_KEY, JSON.stringify(preferences));
+    } catch (error) { console.warn('Preferenze del backup non aggiornate.', error); }
+    markLocalMutation();
     events = await readAllEvents();
     purchases = await readAllPurchases();
+    categories = await loadCategoriesForOwner(activeOwnerId);
     render();
+    requestCloudSync();
     showToast(`Importati ${validated.events.length} consumi e ${validated.purchases.length} acquisti.`);
   } catch (error) {
     console.error(error);
@@ -1968,34 +3684,31 @@ async function importJsonFile(file) {
 }
 
 async function handleClearData() {
-  if (!isAuthenticated) {
-    openAuthenticationModal();
+  if (events.length === 0 && purchases.length === 0) {
+    showToast('Non ci sono registrazioni o acquisti da eliminare.', 'info');
     return;
   }
-  if (events.length === 0) {
-    showToast('Non ci sono registrazioni da eliminare.', 'info');
-    return;
-  }
+  const recordsToDelete = events.length + purchases.length;
   const approved = await openActionDialog({
     title: 'Eliminare tutto lo storico?',
-    message: `Stai per eliminare ${events.length} registrazioni e ${purchases.length} acquisti dall’account e da questo dispositivo. L’operazione non si può annullare. Esporta prima un backup se vuoi conservarli.`,
+    message: `Stai per eliminare ${events.length} registrazioni e ${purchases.length} acquisti da questo archivio. La cancellazione verrà sincronizzata quando possibile. Esporta prima un backup se vuoi conservarli.`,
     confirmLabel: 'Sì, elimina tutto',
     danger: true
   });
   if (!approved) return;
   try {
-    if (cloudConfigured) {
-      await supabaseRequest('rpc/replace_smokelog_data', {
-        method: 'POST',
-        body: JSON.stringify({ p_events: [], p_purchases: [] })
-      });
-    }
-    await clearAllEvents();
-    await clearAllPurchases();
-    events = [];
-    purchases = [];
+    const deletedAt = new Date().toISOString();
+    const eventTombstones = await readAllEvents(activeOwnerId, true);
+    const purchaseTombstones = await readAllPurchases(activeOwnerId, true);
+    const tombstone = record => ({ ...record, deletedAt,
+      updatedAt: new Date(Math.max(Date.parse(deletedAt), (Date.parse(record.updatedAt) || 0) + 1)).toISOString() });
+    const committed = await commitArchive(activeOwnerId, [eventTombstones.map(tombstone), purchaseTombstones.map(tombstone), []]);
+    markLocalMutation();
+    events = committed[0].filter(event => !event.deletedAt);
+    purchases = committed[1].filter(purchase => !purchase.deletedAt);
     render();
-    showToast('Storico eliminato.');
+    requestCloudSync();
+    showToast(`${recordsToDelete} voci eliminate dall’archivio.`);
   } catch (error) {
     console.error(error);
     showToast('Non è stato possibile eliminare lo storico.', 'error');
@@ -2004,7 +3717,7 @@ async function handleClearData() {
 
 async function updateStorageStatus() {
   if (!navigator.storage || typeof navigator.storage.persisted !== 'function') {
-    elements.storageStatus.textContent = 'Questo browser non permette a SmokeLog di richiedere la protezione dell’archivio. Conserva periodicamente un backup JSON.';
+    elements.storageStatus.textContent = 'Questo browser non permette a SmokeLOG di richiedere la protezione dell’archivio. Conserva periodicamente un backup JSON.';
     return;
   }
 
@@ -2039,16 +3752,24 @@ async function requestStoragePersistence() {
 }
 
 function setupEventHandlers() {
-  document.getElementById('add-cigarette').addEventListener('click', () => handleAddEvent('cigarette'));
-  document.getElementById('add-joint').addEventListener('click', () => handleAddEvent('joint'));
-  document.getElementById('add-half-cigarette').addEventListener('click', () => handleAddEvent('half-cigarette'));
-  document.getElementById('add-puzzetta').addEventListener('click', () => handleAddEvent('puzzetta'));
-  document.getElementById('add-puff').addEventListener('click', () => handleAddEvent('puff'));
-  document.querySelectorAll('[data-purchase-type]').forEach(button => {
-    button.addEventListener('click', () => void handleAddPurchase(button.dataset.purchaseType));
+  setupGoals();
+  document.getElementById('delete-account').addEventListener('click', () => void handleDeleteAccount());
+  document.getElementById('record-expense').addEventListener('click', () => void handleAddPurchase());
+  elements.accountAccessButton.addEventListener('click', () => {
+    if (isAuthenticated) setAppPage('settings');
+    else openAuthenticationModal();
   });
-  document.querySelectorAll('[data-event-type]').forEach(button => {
-    button.addEventListener('click', () => openCategoryDetails('event', button.dataset.eventType));
+  elements.categoryStatsGrid.addEventListener('click', event => {
+    const button = event.target.closest('[data-event-type]');
+    if (button && elements.categoryStatsGrid.contains(button)) {
+      openCategoryDetails('event', button.dataset.eventType);
+    }
+  });
+  elements.categoryForm.addEventListener('submit', event => {
+    event.preventDefault();
+    void addCategory(elements.categoryName.value).then(added => {
+      if (added) elements.categoryForm.reset();
+    });
   });
   elements.expenseCategoryGrid.addEventListener('click', event => {
     const card = event.target.closest('[data-purchase-type]');
@@ -2080,8 +3801,15 @@ function setupEventHandlers() {
   });
   elements.purchaseForm.addEventListener('submit', event => {
     event.preventDefault();
+    const type = elements.purchaseType.value;
     const amount = elements.purchaseAmount.valueAsNumber;
     const amountCents = Math.round(amount * 100);
+    if (!Object.hasOwn(PURCHASE_LABELS, type)) {
+      elements.purchaseFormError.textContent = 'Scegli una categoria di spesa.';
+      elements.purchaseFormError.hidden = false;
+      elements.purchaseType.reportValidity();
+      return;
+    }
     if (!Number.isFinite(amount) || !elements.purchaseAmount.checkValidity()
       || !Number.isSafeInteger(amountCents) || amountCents < 1 || amountCents > 9999999999) {
       elements.purchaseFormError.textContent = 'Inserisci un importo valido, maggiore di zero e con al massimo due decimali.';
@@ -2090,7 +3818,7 @@ function setupEventHandlers() {
       return;
     }
     elements.purchaseFormError.hidden = true;
-    elements.purchaseDialog.returnValue = String(amountCents);
+    elements.purchaseDialog.returnValue = `${type}:${amountCents}`;
     elements.purchaseDialog.close();
   });
   elements.purchaseCancel.addEventListener('click', () => elements.purchaseDialog.close());
@@ -2108,6 +3836,23 @@ function setupEventHandlers() {
   });
   document.querySelectorAll('[data-stats-view]').forEach(button => {
     button.addEventListener('click', () => setStatsView(button.dataset.statsView));
+  });
+  document.querySelectorAll('[data-page-target]').forEach(button => {
+    button.addEventListener('click', () => setAppPage(button.dataset.pageTarget));
+  });
+  elements.historyKindFilter.addEventListener('change', () => {
+    historyKindFilter = elements.historyKindFilter.value;
+    historyVisibleCount = HISTORY_PAGE_SIZE;
+    renderHistory();
+  });
+  elements.historyRangeFilter.addEventListener('change', () => {
+    historyRangeFilter = elements.historyRangeFilter.value;
+    historyVisibleCount = HISTORY_PAGE_SIZE;
+    renderHistory();
+  });
+  elements.historyLoadMore.addEventListener('click', () => {
+    historyVisibleCount += HISTORY_PAGE_SIZE;
+    renderHistory();
   });
   document.getElementById('export-json').addEventListener('click', exportJson);
   document.getElementById('export-csv').addEventListener('click', exportCsv);
@@ -2137,6 +3882,58 @@ function setupEventHandlers() {
   };
   elements.accountPassword.addEventListener('input', updatePasswordConfirmationValidity);
   elements.confirmPassword.addEventListener('input', updatePasswordConfirmationValidity);
+  elements.signupNickname.addEventListener('input', () => elements.signupNickname.setCustomValidity(''));
+  elements.signupAvatarFile.addEventListener('change', () => {
+    const file = elements.signupAvatarFile.files && elements.signupAvatarFile.files[0];
+    signupAvatarDraft = file || null;
+    if (signupAvatarPreviewUrl) URL.revokeObjectURL(signupAvatarPreviewUrl);
+    signupAvatarPreviewUrl = file ? URL.createObjectURL(file) : null;
+    if (file) setProfilePreview(elements.signupAvatarPreview, signupAvatarPreviewUrl);
+    else elements.signupAvatarPreview.replaceChildren();
+  });
+  elements.profileForm.addEventListener('submit', event => void saveProfileSettings(event));
+  elements.profileNickname.addEventListener('input', () => elements.profileNickname.setCustomValidity(''));
+  elements.profileAvatarFile.addEventListener('change', () => {
+    const file = elements.profileAvatarFile.files && elements.profileAvatarFile.files[0];
+    profileAvatarDraft = file || null;
+    removeProfileAvatarOnSave = false;
+    elements.removeProfileAvatar.textContent = 'Rimuovi foto';
+    const currentProfile = accountProfile(cloudSession && cloudSession.user);
+    elements.removeProfileAvatar.hidden = !file && !currentProfile.avatarPath && !currentProfile.avatarUrl;
+    if (profileAvatarPreviewUrl) URL.revokeObjectURL(profileAvatarPreviewUrl);
+    profileAvatarPreviewUrl = file ? URL.createObjectURL(file) : null;
+    if (file) setProfilePreview(elements.profileAvatarPreview, profileAvatarPreviewUrl);
+    else {
+      const user = cloudSession && cloudSession.user;
+      const profile = accountProfile(user);
+      const cachedUrl = user && resolvedAvatarCache && resolvedAvatarCache.key === `${user.id}:${profile.avatarPath}`
+        ? resolvedAvatarCache.url
+        : profile.avatarUrl;
+      setProfilePreview(elements.profileAvatarPreview, cachedUrl);
+    }
+    setProfileFormStatus();
+  });
+  elements.removeProfileAvatar.addEventListener('click', () => {
+    if (removeProfileAvatarOnSave) {
+      removeProfileAvatarOnSave = false;
+      elements.removeProfileAvatar.textContent = 'Rimuovi foto';
+      const user = cloudSession && cloudSession.user;
+      const profile = accountProfile(user);
+      const cachedUrl = user && resolvedAvatarCache && resolvedAvatarCache.key === `${user.id}:${profile.avatarPath}`
+        ? resolvedAvatarCache.url
+        : profile.avatarUrl;
+      setProfilePreview(elements.profileAvatarPreview, cachedUrl);
+      return;
+    }
+    if (profileAvatarPreviewUrl) URL.revokeObjectURL(profileAvatarPreviewUrl);
+    profileAvatarPreviewUrl = null;
+    profileAvatarDraft = null;
+    elements.profileAvatarFile.value = '';
+    removeProfileAvatarOnSave = true;
+    elements.removeProfileAvatar.textContent = 'Annulla rimozione';
+    setProfilePreview(elements.profileAvatarPreview, null);
+    setProfileFormStatus('La foto verrà rimossa dal profilo quando salvi.');
+  });
   setupAuthenticationEvents();
 }
 
@@ -2145,23 +3942,24 @@ async function init() {
   loadStatsPreferences();
   setStatsView(activeStatsView, false);
   updateRangeButtons();
+  setupSettingsSectionPreferences();
   setupEventHandlers();
   updateAccountControls();
   try {
     await openDatabase();
-    events = await readAllEvents();
-    purchases = await readAllPurchases();
-    if (cloudConfigured) {
-      events = [];
-      purchases = [];
-    }
+    activeOwnerId = GUEST_OWNER_ID;
+    events = await readAllEvents(activeOwnerId);
+    purchases = await readAllPurchases(activeOwnerId);
+    categories = await loadCategoriesForOwner(activeOwnerId);
+    isAppReady = true;
     render();
+    updateAccountControls();
     await updateStorageStatus();
   } catch (error) {
     console.error(error);
     await openActionDialog({
       title: 'Archivio non disponibile',
-      message: `SmokeLog non riesce ad aprire l’archivio locale. Prova con una versione recente di Safari o di un browser compatibile. Dettaglio: ${error.message || 'errore sconosciuto'}`,
+      message: `SmokeLOG non riesce ad aprire l’archivio locale. Prova con una versione recente di Safari o di un browser compatibile. Dettaglio: ${error.message || 'errore sconosciuto'}`,
       notice: true
     });
   }
@@ -2170,11 +3968,10 @@ async function init() {
     if (cloudConfigured) {
       await restoreCloudSession();
     } else {
-      setAccountStatus('Sincronizzazione non configurata. Completa la configurazione Supabase descritta nel README.');
+      setAccountStatus('Archivio locale attivo. Configura Supabase dal README se vuoi sincronizzare i dati tra dispositivi.');
     }
   } finally {
-    hasResolvedInitialSession = true;
-    updateAccountControls();
+    if (isAppReady) updateAccountControls();
   }
 
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
