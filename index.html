@@ -11,7 +11,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./assets/css/app.css">
   <title>SmokeLOG · Il tuo diario</title>
 </head>
 <body>
@@ -82,7 +82,7 @@
         </div>
         <div class="stats-view-switch" role="group" aria-label="Vista delle statistiche">
           <button type="button" class="stats-view-button is-active" data-stats-view="expenses" aria-pressed="true">Spese</button>
-          <button type="button" class="stats-view-button" data-stats-view="consumption" aria-pressed="false">Quantità consumate</button>
+          <button type="button" class="stats-view-button" data-stats-view="consumption" aria-pressed="false">Registrazioni per categoria</button>
           <button type="button" class="stats-view-button" data-stats-view="insights" aria-pressed="false">Consapevolezza</button>
         </div>
         <div class="range-switch" id="stats-range-switch" role="group" aria-label="Periodo delle statistiche">
@@ -94,24 +94,16 @@
         <div id="insights-view" class="stats-view-content" hidden>
           <article class="insight-hero">
             <p class="eyebrow">IL TUO PUNTO DI PARTENZA</p>
-            <h3>Piccoli passi, più consapevolezza.</h3>
-            <p>Osserva le tue abitudini e scegli un obiettivo alla tua misura.</p>
-            <span id="insight-period" class="insight-period"></span>
-          </article>
-          <div class="insight-grid">
-            <article class="insight-card"><span class="stat-label">Spesa di questo mese</span><strong id="insight-month-spend">—</strong><small>Acquisti registrati fino a oggi</small></article>
-            <article class="insight-card"><span class="stat-label">Media giornaliera</span><strong id="insight-daily-spend">—</strong><small>Spesa degli ultimi 28 giorni completi ÷ 28</small></article>
-            <article class="insight-card"><span class="stat-label">Come cambiano i consumi</span><strong id="insight-change">—</strong><small id="insight-change-detail"></small></article>
-            <article class="insight-card"><span class="stat-label">Come cambia la spesa</span><strong id="insight-spend-change">—</strong><small id="insight-spend-detail"></small></article>
-          </div>
-          <article class="insight-panel">
-            <div class="chart-heading"><div><h3>Quando registri di più</h3><p>Distribuzione dei consumi negli ultimi 28 giorni completi</p></div></div>
-            <div id="insight-hours" class="insight-hours"></div>
-            <p id="insight-peaks" class="microcopy"></p>
+            <h3>Il tuo riepilogo</h3><p id="weekly-summary"></p>
+            <p class="microcopy">Qui trovi il numero di registrazioni degli ultimi 7 giorni completi e il piccolo esperimento che hai scelto di osservare. Oggi è escluso dal confronto.</p>
+            <p class="microcopy">La copertura indica quanti giorni hai confermato come completi: serve per calcolare medie e simulazioni senza scambiare i giorni non compilati per giorni senza consumi.</p>
+            <p id="coverage-summary"></p>
+            <div id="wellness-controls"></div><span id="insight-period" class="insight-period"></span>
           </article>
           <article class="insight-panel">
-            <div class="chart-heading"><div><h3>I tuoi obiettivi</h3><p>Facoltativi, modificabili e salvati su questo dispositivo per il tuo archivio.</p></div></div>
-            <form id="goals-form" class="goals-form">
+            <div class="chart-heading"><div><h3>I tuoi obiettivi</h3><p>Usali come riferimenti personali: il budget segue tutte le spese del mese; il limite conta le registrazioni di oggi nella categoria scelta. Puoi modificarli o rimuoverli quando vuoi; con un account vengono sincronizzati.</p></div></div>
+            <div id="goal-progress" class="goal-progress"></div>
+            <details id="goals-editor"><summary>Modifica obiettivi</summary><form id="goals-form" class="goals-form">
               <label>Categoria da osservare<select id="goal-category"><option value="all">Tutte le categorie</option></select></label>
               <div class="goals-fields">
                 <label>Budget mensile · €<input id="goal-budget" type="number" min="0.01" max="100000" step="0.01" inputmode="decimal" placeholder="Es. 100"></label>
@@ -121,17 +113,29 @@
               <div class="goal-actions"><button type="submit" class="primary-button">Salva obiettivi</button><button type="button" id="reset-goals" class="text-button">Rimuovi obiettivi</button></div>
               <p id="goals-status" class="microcopy" role="status"></p>
             </form>
-            <div id="goal-progress" class="goal-progress"></div>
+            </details>
           </article>
-          <article class="insight-panel savings-panel">
-            <p class="eyebrow">UNO SCENARIO POSSIBILE</p><h3>Quanto potresti risparmiare?</h3>
+          <div class="insight-grid">
+            <article class="insight-card"><span class="stat-label">Spesa di questo mese</span><strong id="insight-month-spend">—</strong><small>Totale degli acquisti registrati nel mese corrente: aiuta a tenere d’occhio la spesa accumulata.</small></article>
+            <article class="insight-card"><span class="stat-label">Media giornaliera</span><strong id="insight-daily-spend">—</strong><small>Spesa divisa per i giorni confermati negli ultimi 28. I giorni non confermati sono esclusi; senza conferme la media non è disponibile.</small></article>
+            <article class="insight-card"><span class="stat-label">Come cambiano i consumi</span><strong id="insight-change">—</strong><small>Confronta le registrazioni degli ultimi 7 giorni completi con i 7 precedenti: aiuta a notare un cambiamento nel tempo.</small><small id="insight-change-detail"></small></article>
+            <article class="insight-card"><span class="stat-label">Come cambia la spesa</span><strong id="insight-spend-change">—</strong><small>Confronta gli importi spesi negli stessi due periodi, considerando tutte le categorie di acquisto.</small><small id="insight-spend-detail"></small></article>
+          </div>
+          <details class="insight-panel"><summary>Quando registri di più</summary><p class="microcopy">Distribuzione dei consumi negli ultimi 28 giorni completi</p>
+            <p class="microcopy">Ti aiuta a riconoscere le fasce orarie e i giorni della settimana in cui registri più spesso; non indica una causa o una previsione.</p>
+            <div id="insight-hours" class="insight-hours"></div>
+            <p id="insight-peaks" class="microcopy"></p>
+          </details>
+
+          <details class="insight-panel savings-panel"><summary>Simula un risparmio</summary>
+            <p class="microcopy">Scegli una riduzione ipotetica della spesa e guarda quanto varrebbe in 30 o 365 giorni, usando la tua spesa media registrata come riferimento.</p>
             <label for="savings-reduction" class="savings-label">Riduzione della spesa <output id="savings-percent" for="savings-reduction">20%</output></label>
             <input id="savings-reduction" type="range" min="0" max="100" step="5" value="20">
             <div class="savings-values" aria-live="polite"><div><strong id="savings-month">—</strong><small>in 30 giorni</small></div><div><strong id="savings-year">—</strong><small>in 365 giorni</small></div></div>
             <p id="savings-context" class="microcopy"></p>
-            <p class="microcopy">Simulazione: media degli acquisti degli ultimi 28 giorni completi × giorni × riduzione. Presuppone prezzi e abitudini costanti. Ridurre i consumi non comporta automaticamente lo stesso calo degli acquisti.</p>
-          </article>
-          <p class="microcopy insight-method">I confronti usano gli ultimi 7 giorni completi e i 7 precedenti, escludendo oggi. I giorni senza registrazioni valgono zero: dati incompleti possono alterare il confronto.</p>
+            <p class="microcopy">Simulazione: media degli acquisti nei giorni confermati degli ultimi 28 × giorni × riduzione. Presuppone prezzi e abitudini costanti. Ridurre i consumi non comporta automaticamente lo stesso calo degli acquisti.</p>
+          </details>
+          <details class="insight-method"><summary>Come leggiamo i dati</summary><p class="microcopy">Le variazioni confrontano le ultime due settimane complete ed escludono oggi; sono mostrate solo quando tutti i 14 giorni sono confermati. Un giorno non confermato è un dato mancante, non un giorno senza consumo. La media giornaliera e la simulazione usano gli acquisti dei giorni confermati negli ultimi 28 giorni; il totale mensile include tutti gli acquisti registrati nel mese corrente. I consumi contano registrazioni, non dosi equivalenti: quantità e unità restano separate per categoria.</p></details>
         </div>
         <div id="expense-view" class="stats-view-content">
           <section class="expense-summary" aria-labelledby="expense-heading">
@@ -155,7 +159,8 @@
           </section>
         </div>
         <div id="consumption-view" class="stats-view-content" hidden>
-          <h3 class="consumption-stats-heading">Quantità consumate</h3>
+          <h3 class="consumption-stats-heading">Registrazioni per categoria</h3>
+          <p class="microcopy">Il totale conta le voci registrate, non quantità equivalenti tra prodotti. Le quantità storiche non specificate restano sconosciute; le unità diverse non vengono sommate.</p>
           <div class="stats-grid">
           <article class="stat-card stat-total-card">
             <span class="stat-label" id="period-label">Totale di oggi</span>
@@ -323,7 +328,7 @@
         <span class="footer-mark">S·L</span>
         <p>Un dato alla volta. Senza giudizi.</p>
         <p class="footer-privacy"><span class="privacy-dot"></span> <span id="footer-privacy-label">Solo sul dispositivo · Nessun analytics</span></p>
-        <p class="version-label">SmokeLOG · beta 1.1</p>
+        <p class="version-label">SmokeLOG · beta 1.2</p>
       </footer>
       </section>
     </main>
@@ -409,6 +414,8 @@
       </select>
       <label for="purchase-amount">Importo pagato</label>
       <div class="amount-input-wrap"><span aria-hidden="true">€</span><input id="purchase-amount" type="number" inputmode="decimal" min="0.01" max="99999999.99" step="0.01" placeholder="0,00" required></div>
+      <label for="purchase-timestamp">Data e ora dell’acquisto</label>
+      <input id="purchase-timestamp" type="datetime-local" required>
       <p id="purchase-form-error" class="purchase-form-error" role="alert" hidden></p>
       <div class="purchase-modal-actions">
         <button type="button" class="secondary-button" id="purchase-cancel">Annulla</button>
@@ -421,6 +428,7 @@
     <p class="eyebrow" id="timestamp-dialog-eyebrow">MODIFICA DATA E ORA</p>
     <h2 id="timestamp-dialog-title">Data e ora</h2>
     <p class="purchase-modal-copy">Scegli quando è avvenuto questo evento.</p>
+    <div id="record-edit-fields" class="purchase-form"></div>
     <form id="timestamp-form" class="purchase-form" novalidate>
       <label for="timestamp-date">Data</label>
       <input id="timestamp-date" class="timestamp-input" type="date" required>
@@ -430,7 +438,7 @@
       <p id="timestamp-form-error" class="purchase-form-error" role="alert" hidden></p>
       <div class="purchase-modal-actions">
         <button type="button" class="secondary-button" id="timestamp-cancel">Annulla</button>
-        <button type="submit" class="primary-button" id="timestamp-save">Salva data e ora</button>
+        <button type="submit" class="primary-button" id="timestamp-save">Salva modifiche</button>
       </div>
     </form>
   </dialog>

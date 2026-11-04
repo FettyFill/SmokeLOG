@@ -1,5 +1,7 @@
 # SmokeLOG — guida per tester e verifiche
 
+**Beta 1.2, collaudo pilota locale aggiornato al 2 novembre 2026:** `npm run check`, `npm test` (26 test) e `npm run test:ui` (4 scenari browser su mobile e desktop) superati. La build viene eseguita automaticamente prima dei controlli. I test coprono dati, SQL locale, concorrenza, backup, statistiche e flussi browser. Il collaudo non certifica Supabase remoto, Safari/iPhone o altri dispositivi fisici; vedere [UPGRADE-1.2.md](UPGRADE-1.2.md).
+
 Beta 1.1 · 28 ottobre 2026. Referente: Filippo Roggia, filippo.lumia0@gmail.com.
 
 ## Preparazione
@@ -29,14 +31,16 @@ I test UI usano la porta 49173: fermare l'anteprima prima di eseguirli. In local
 | Icona | Aprire Impostazioni dalla barra inferiore | Ingranaggio centrato e leggibile, controllo funzionante |
 | Storico | Cambiare la data di una voce e cancellarne un'altra | Statistiche coerenti con la modifica e voce cancellata non visibile |
 | Obiettivi | Salvare budget e limite; ricaricare | Valori conservati per lo stesso archivio locale |
-| Simulatore | Inserire acquisti nei giorni precedenti e variare la percentuale | Importi coerenti con media su 28 giorni × 30/365 × percentuale |
+| Simulatore | Confermare 13 e poi 14 giorni; variare la percentuale | Con 13 giorni la stima resta nascosta; da 14 usa gli acquisti dei soli giorni confermati |
+| Conferma giornata | Confermare un giorno e aggiungere, modificare o eliminare una voce con quella data | La conferma viene rimossa e l'app chiede di rivedere e riconfermare il giorno |
+| Quantità storiche | Aprire in modifica una registrazione senza quantità e poi esportare CSV | Nessuna quantità viene inventata: va specificata esplicitamente; il CSV lascia vuoti i dati sconosciuti |
 | Nessun dato | Aprire Consapevolezza su archivio vuoto | Nessuna percentuale infinita o stima presentata come attendibile senza acquisti |
 | JSON | Esportare e reimportare una copia valida | Unione per ID; modifiche più recenti non sostituite da copie vecchie |
 | Offline | Dopo il primo caricamento, disattivare la rete e riaprire | Interfaccia e archivio locale disponibili; nuove voci salvate localmente |
-| Mobile | Provare 320–375 px e un dispositivo reale | Nessun overflow orizzontale; controlli raggiungibili |
+| Mobile | Test browser a 320, 375, 390 e 430 px; poi dispositivo reale | Nessun overflow orizzontale; controlli raggiungibili |
 | Accessibilità | Navigare da tastiera e abilitare riduzione movimento | Focus visibile, input utilizzabili, animazioni disattivate |
 
-Il simulatore usa giorni completi: gli acquisti di oggi entrano nella media dal giorno successivo. Gli obiettivi non sono sincronizzati su un altro dispositivo e non fanno parte del backup JSON dello storico.
+Il simulatore richiede almeno 14 giornate confermate nei 28 giorni precedenti; usa gli acquisti registrati in quei giorni, quindi acquisti di scorta e prezzi variabili possono rendere la simulazione poco rappresentativa. Gli obiettivi sono contenuti nel documento di consapevolezza sincronizzato e nel backup JSON v4.
 
 ## Collaudo cloud, prima del rilascio
 

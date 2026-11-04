@@ -1,10 +1,14 @@
 # SmokeLOG — report sullo stato attuale
 
+**Aggiornamento 2 novembre 2026, beta 1.2:** collaudo pilota locale superato con `npm run check`, 26 test automatici/SQL e 4 scenari browser su mobile e desktop. Le verifiche includono copertura minima 14/28 per le stime, invalidazione delle giornate modificate, quantità storiche sconosciute e viewport 320/375/390/430 px. Non è un'approvazione per il rilascio pubblico: Supabase remoto, Safari/iPhone, accessibilità su dispositivi fisici e distribuzione pubblica non sono stati verificati. Il redesign completo è ancora da realizzare per fasi. Vedi [ARCHITECTURE.md](ARCHITECTURE.md), [guida tester](TESTING.md) e [UPGRADE-1.2.md](UPGRADE-1.2.md).
+
+## Report storico della beta 1.1
+
 Data: 28 ottobre 2026. Versione: beta 1.1 (1.1.0). Responsabile: Filippo Roggia.
 
 ## Valutazione sintetica
 
-Il progetto dispone di un nucleo funzionale per una beta privata: registrazione locale, account, sync, backup e statistiche con obiettivi. Le correzioni recenti affrontano reset delle categorie, scritture concorrenti e importazione di dati vecchi. La nuova area Consapevolezza collega gli acquisti a confronti e scenari di risparmio.
+Il progetto dispone di un nucleo funzionale per una beta privata: registrazione locale, account, sync, backup e statistiche con obiettivi. Le correzioni recenti affrontano reset delle categorie, scritture concorrenti e importazione di dati vecchi. La nuova area Consapevolezza collega gli acquisti a confronti e scenari di risparmio. Le stime sono nascoste sotto 14 giornate confermate su 28; aggiungere, modificare, annullare, eliminare o importare voci rimuove le conferme dei giorni toccati.
 
 È indicato procedere con collaudo controllato e dati fittizi. Non è ancora documentata una validazione completa del servizio pubblicato, né sono completati i prerequisiti per la distribuzione pubblica con dati personali reali.
 
@@ -38,9 +42,9 @@ Questo report deriva dalla lettura del codice locale, dai test automatici e dall
 
 ## Verifiche disponibili
 
-La suite applicativa comprende 19 test: categorie e sync, concorrenza e rollback IndexedDB, backup, download incrementale, autorizzazione/fallimenti della cancellazione, calcoli e migrazione SQL. La suite browser comprende due scenari equivalenti su viewport mobile e desktop, con verifiche anche a 320 px, reload e offline.
+La suite applicativa comprende 26 test: categorie e sync, concorrenza e rollback IndexedDB, backup, download incrementale, autorizzazione/fallimenti della cancellazione, calcoli e migrazione SQL. La suite browser comprende due scenari equivalenti su viewport mobile e desktop; verifica reload, offline, reduced motion e layout a 320, 375, 390 e 430 px.
 
-Nell'ultima revisione sono stati rieseguiti con esito positivo i controlli sintattici e i 19 test applicativi. Una verifica mirata in Chrome a 375 px ha confermato testi non selezionabili, selezione funzionante negli input e assenza di overflow; l'icona è stata controllata tramite screenshot. I due scenari browser completi risultavano superati nel lavoro precedente. I risultati delle esecuzioni future saranno consultabili in CI. I test usano fake-indexeddb, PostgreSQL tramite PGlite e Chrome: non attestano il comportamento di Safari/iOS o dell'infrastruttura Supabase reale.
+Il 2 novembre sono stati rieseguiti con esito positivo controllo sintattico, 26 test applicativi/SQL e 4 esecuzioni browser. I test usano fake-indexeddb, PostgreSQL tramite PGlite e Chrome: non attestano il comportamento di Safari/iOS o dell'infrastruttura Supabase reale.
 
 ## Limiti attuali
 
@@ -53,6 +57,8 @@ Nell'ultima revisione sono stati rieseguiti con esito positivo i controlli sinta
 | Cancellazione storico | Record contrassegnati, non rimossi fisicamente | Non equivale a eliminazione definitiva dei dati |
 | Account | Autoeliminazione disabilitata nel client | Durante la beta la richiesta passa dal supporto |
 | Privacy | Regione, conservazione, basi giuridiche e gestione degli eventuali consensi da completare | Non presentare la beta come già pronta per dati personali reali |
+| Redesign completo | Prima apertura guidata, temi chiaro/scuro, nuova navigazione Percorso/Diario, calendario e grafici interattivi accessibili non sono ancora implementati come da brief | Il collaudo pilota copre le funzioni esistenti e le correzioni indicate, non l'accettazione dell'intero brief |
+| Quantità | Non è stata fornita una mappatura certa delle categorie esistenti in quantità/unità; i conteggi legacy non sono stati convertiti | Non confrontare i totali eventi con quantità fisiche; definire e testare la mappatura prima della migrazione quantitativa |
 | Qualità | Nessun audit completo di accessibilità, sicurezza o carico | I test automatici coprono casi definiti, non ogni comportamento possibile |
 
 ## Priorità successive

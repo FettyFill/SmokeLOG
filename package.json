@@ -1,8 +1,12 @@
 {
   "name": "smokelog-pwa",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "scripts": {
+    "build": "node scripts/build.cjs",
+    "pretest": "node scripts/build.cjs",
+    "pretest:ui": "node scripts/build.cjs",
+    "precheck": "node scripts/build.cjs",
     "preview": "node scripts/serve.cjs",
     "test:ui": "playwright test",
     "test": "node --test",

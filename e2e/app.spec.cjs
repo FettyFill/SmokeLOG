@@ -10,8 +10,32 @@ test('insights, goals, reload, reduced motion and private local records', async 
   await page.locator('[data-page-target="stats"]').click();
   await page.getByRole('button', { name: 'Consapevolezza', exact: true }).click();
   await expect(page.locator('#insights-view')).toBeVisible();
+  await expect(page.locator('#wellness-purpose option[value="quit"]')).toHaveCount(0);
   await expect(page.locator('#stats-range-switch')).toBeHidden();
+  await expect(page.locator('#insights-view')).toContainText('Qui trovi il numero di registrazioni degli ultimi 7 giorni completi');
+  await expect(page.locator('#insights-view')).toContainText('Usali come riferimenti personali');
+  await page.locator('#wellness-controls summary').click();
+  await expect(page.locator('#wellness-controls')).toContainText('Conferma una giornata');
+  await expect(page.locator('#wellness-controls')).toContainText('Annota una voglia senza consumo');
+  await expect(page.locator('#wellness-controls')).toContainText('Versioni del diario');
+  await page.evaluate(() => {
+    const wellness = readWellness().payload;
+    wellness.purpose = 'quit';
+    saveWellness(wellness);
+    wellnessFormOwner = null;
+    renderWellness();
+  });
+  await expect(page.locator('#wellness-purpose-note')).toBeVisible();
+  await expect(page.locator('#wellness-purpose')).toHaveValue('');
+  await page.locator('#wellness-purpose').selectOption('reduce');
+  await page.locator('#save-wellness').click();
+  await expect(page.locator('#wellness-status')).toContainText('Percorso salvato');
+  await page.locator('#wellness-controls summary').click();
+  await page.locator('.insight-method summary').click();
+  await expect(page.locator('.insight-method')).toContainText('tutti i 14 giorni');
+  await page.locator('.insight-method summary').click();
   await expect(page.locator('#savings-month')).toHaveText('—');
+  await page.locator('#goals-editor summary').click();
   await page.locator('#goal-budget').fill('100');
   await page.locator('#goal-limit').fill('5');
   await page.getByRole('button', { name: 'Salva obiettivi', exact: true }).click();
@@ -30,14 +54,27 @@ test('insights, goals, reload, reduced motion and private local records', async 
   await page.locator('[data-page-target="stats"]').click();
   // Populate only the isolated test browser with synthetic history.
   await page.evaluate(async () => {
+    const wellness = readWellness().payload;
+    wellness.startedOn = localDateKey(addDays(new Date(), -28));
     for (let days = 1; days <= 28; days++) {
       const date = new Date(); date.setDate(date.getDate() - days); date.setHours(18, 0, 0, 0);
+      if (days <= 13) wellness.confirmedDays[localDateKey(date)] = true;
       await persistPurchase({ id: makeId(), type: 'cigarette-pack', amountCents: 500, timestamp: date.toISOString(), updatedAt: date.toISOString() });
       await persistEvent({ id: makeId(), type: 'cigarette', timestamp: date.toISOString(), updatedAt: date.toISOString() });
     }
+    saveWellness(wellness);
     events = await readAllEvents(); purchases = await readAllPurchases(); render();
   });
+  await expect(page.locator('#savings-month')).toHaveText('—');
+  await expect(page.locator('#savings-context')).toContainText('13/28');
+  await page.evaluate(() => {
+    const date = new Date(); date.setDate(date.getDate() - 14);
+    const wellness = readWellness().payload;
+    wellness.confirmedDays[localDateKey(date)] = true;
+    saveWellness(wellness); render();
+  });
   await expect(page.locator('#savings-month')).toContainText('30,00');
+  await page.locator('.savings-panel summary').click();
   await page.locator('#savings-reduction').fill('50');
   await expect(page.locator('#savings-month')).toContainText('75,00');
   await expect(page.locator('#insight-change')).toHaveText('0%');
@@ -45,6 +82,7 @@ test('insights, goals, reload, reduced motion and private local records', async 
   await page.screenshot({ path: testInfo.outputPath('consapevolezza.png'), fullPage: true });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   expect(await page.locator('#insights-view').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+  await page.locator('#goals-editor summary').click();
   await page.getByRole('button', { name: 'Rimuovi obiettivi', exact: true }).click();
   await expect(page.locator('#goal-progress')).toContainText('Nessun obiettivo');
   await page.locator('[data-page-target="settings"]').click();
@@ -61,7 +99,9 @@ test('insights, goals, reload, reduced motion and private local records', async 
   await page.reload();
   await expect(page.locator('#record-buttons button').first()).toContainText('Sigaretta test');
   await page.locator('[data-page-target="stats"]').click();
-  await page.setViewportSize({ width: 320, height: 740 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  for (const width of [320, 375, 390, 430]) {
+    await page.setViewportSize({ width, height: 740 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
   expect(errors).toEqual([]);
 });

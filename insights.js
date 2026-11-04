@@ -3,6 +3,7 @@
 // Pure calculations shared by the UI and the regression tests. Calendar days
 // are constructed locally, so daylight-saving changes do not shorten a period.
 (function (root) {
+  const MINIMUM_SAVINGS_COVERAGE_DAYS = 14;
   function day(date, offset = 0) {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate() + offset);
   }
@@ -13,7 +14,7 @@
   function change(current, previous) {
     return previous === 0 ? null : Math.round((current - previous) / previous * 100);
   }
-  function calculate(events, purchases, now = new Date(), category = 'all') {
+  function calculate(events, purchases, now = new Date(), category = 'all', monitoring = null) {
     const today = day(now);
     const tomorrow = day(now, 1);
     const week = day(now, -7);
@@ -38,24 +39,38 @@
     }
     const peaks = values => {
       const maximum = Math.max(...values);
-      return maximum ? values.flatMap((value, index) => value === maximum ? [index] : []) : [];
+      return maximum && !values.every(value => value === maximum) ? values.flatMap((value, index) => value === maximum ? [index] : []) : [];
     };
+    const dateKey = date => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    const covered = offset => {
+      const key = dateKey(day(now, offset));
+      return !monitoring || ((!monitoring.startedOn || key >= monitoring.startedOn) && Boolean(monitoring.confirmedDays?.[key]));
+    };
+    const coveredDays = Array.from({ length: 28 }, (_, i) => covered(-i-1)).filter(Boolean).length;
+    const comparable = Array.from({ length: 14 }, (_, i) => covered(-i-1)).every(Boolean);
+    const coveredPurchases = last28Purchases.filter(item => {
+      const key = dateKey(new Date(item.timestamp));
+      return !monitoring || ((!monitoring.startedOn || key >= monitoring.startedOn) && monitoring.confirmedDays?.[key]);
+    });
+    const coveredSpend = sum(coveredPurchases);
     return {
       todayCount: visible.filter(event => between(event, today, tomorrow) && Date.parse(event.timestamp) <= now.getTime()).length,
       currentCount: recent.length, previousCount: previous.length,
-      countChange: change(recent.length, previous.length),
-      lastWeekSpend, previousWeekSpend, spendChange: change(lastWeekSpend, previousWeekSpend),
+      countChange: comparable ? change(recent.length, previous.length) : null,
+      lastWeekSpend, previousWeekSpend, spendChange: comparable ? change(lastWeekSpend, previousWeekSpend) : null,
       monthSpend: sum(spending.filter(item => between(item, monthStart, tomorrow) && Date.parse(item.timestamp) <= now.getTime())),
       last28Spend: sum(last28Purchases), purchaseCount: last28Purchases.length,
-      dailySpend: sum(last28Purchases) / 28,
+      coveredPurchaseCount: coveredPurchases.length,
+      dailySpend: coveredDays ? coveredSpend / coveredDays : null,
+      coveredDays, comparable, coveredSpend,
       hourly, peakTimes: peaks(hourly), peakDays: peaks(weekdays),
       observationCount: observation.length,
       from: monthWindow, to: day(now, -1), weekFrom: week, weekTo: day(now, -1)
     };
   }
-  function savings(spend28, reduction) {
+  function savings(spend28, reduction, days = 28) {
     const fraction = Math.min(100, Math.max(0, Number(reduction) || 0)) / 100;
-    return { monthly: Math.round(spend28 / 28 * 30 * fraction), yearly: Math.round(spend28 / 28 * 365 * fraction) };
+    return { monthly: days ? Math.round(spend28 / days * 30 * fraction) : null, yearly: days ? Math.round(spend28 / days * 365 * fraction) : null };
   }
   function validateGoals(input) {
     const budget = input.budget === '' || input.budget == null ? null : Number(input.budget);
@@ -67,7 +82,7 @@
     return { budget: budget === null ? null : Math.round(budget * 100) / 100, limit, reduction,
       category: typeof input.category === 'string' ? input.category : 'all' };
   }
-  const api = { calculate, savings, validateGoals };
+  const api = { calculate, savings, validateGoals, MINIMUM_SAVINGS_COVERAGE_DAYS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SmokeLogInsights = api;
 })(globalThis);

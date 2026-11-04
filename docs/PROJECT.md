@@ -1,5 +1,7 @@
 # SmokeLOG — documentazione ufficiale del progetto
 
+Per la struttura e i comportamenti della **versione 1.2** leggere [ARCHITECTURE.md](ARCHITECTURE.md) e [UPGRADE-1.2.md](UPGRADE-1.2.md). Il documento sotto è il riferimento storico della beta 1.1; le descrizioni di obiettivi solo locali e file monolitici sono superate.
+
 Versione documentata: beta 1.1 / pacchetto 1.1.0. Aggiornamento: 28 ottobre 2026. Referente: Filippo Roggia, filippo.lumia0@gmail.com.
 
 Questo documento descrive il codice presente nella cartella di progetto. Non certifica il deploy remoto, la conformità legale o l'assenza di vulnerabilità. Lo stato verificato è mantenuto in [STATUS.md](STATUS.md).

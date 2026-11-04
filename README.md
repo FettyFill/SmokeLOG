@@ -1,6 +1,8 @@
 # SmokeLOG
 
-**Beta privata 1.1 · documentazione aggiornata al 28 ottobre 2026**
+**Beta privata 1.2 · documentazione aggiornata al 2 novembre 2026**
+
+La struttura aggiornata è descritta in [ARCHITECTURE.md](docs/ARCHITECTURE.md). Prima di pubblicare questa versione seguire [UPGRADE-1.2.md](docs/UPGRADE-1.2.md): contiene una nuova migrazione SQL, non ancora applicata al progetto remoto.
 
 SmokeLOG è un diario personale per registrare consumi e acquisti, osservare le abitudini e impostare obiettivi di spesa. È una Progressive Web App realizzata con HTML, CSS e JavaScript senza framework: funziona in locale e può sincronizzare lo storico con un account Supabase.
 
@@ -8,7 +10,9 @@ SmokeLOG è un diario personale per registrare consumi e acquisti, osservare le 
 
 ## Stato del progetto
 
-La versione locale comprende sincronizzazione incrementale, backup con gestione dei conflitti, statistiche, obiettivi e simulatore di risparmio. Il titolare ha confermato l'esecuzione dello schema SQL su Supabase; il risultato remoto e la versione effettivamente pubblicata non sono stati verificati direttamente. La cancellazione automatica dell'account è implementata ma disabilitata finché la funzione server non viene pubblicata e collaudata.
+La versione locale comprende sincronizzazione incrementale, backup con gestione dei conflitti, statistiche, obiettivi e simulatore di risparmio. Il 2 novembre 2026 sono passati 26 test automatici/SQL e 4 scenari browser mobile/desktop. Il simulatore richiede 14 giornate confermate su 28; le modifiche a una giornata ne rimuovono la conferma. Le quantità storiche non specificate restano sconosciute, senza conversioni automatiche.
+
+Il brief di redesign completo è in corso per incrementi: questa beta non include ancora tutte le nuove schermate e interazioni richieste. Il titolare ha confermato l'esecuzione dello schema SQL su Supabase; il risultato remoto e la versione effettivamente pubblicata non sono stati verificati direttamente. La cancellazione automatica dell'account è implementata ma disabilitata finché la funzione server non viene pubblicata e collaudata.
 
 La beta è destinata al collaudo con dati fittizi. Informativa, configurazione dei fornitori e condizioni per l'uso di dati personali reali richiedono ancora completamento. Il progetto non è presentato come già pronto alla commercializzazione.
 
@@ -24,7 +28,7 @@ La beta è destinata al collaudo con dati fittizi. Informativa, configurazione d
 | Account | Accesso email/password, recupero sessione e sincronizzazione tra dispositivi |
 | Offline | Archivio locale e interfaccia disponibile dopo il primo caricamento online |
 
-Gli obiettivi e la percentuale del simulatore restano su questo browser, separati per archivio; non sono sincronizzati né inclusi nel backup dello storico. I confronti usano giorni completi e il risparmio è una simulazione basata sugli acquisti, non una previsione garantita.
+Obiettivi, percorso, giorni confermati e diario delle voglie sono inclusi nel backup JSON v4 e sincronizzati per account. Le registrazioni supportano annullamento rapido, inserimento retrodatato, quantità, unità, contesto e intensità facoltativi; lo storico permette di modificare categoria e importo oltre alla data. I confronti richiedono giorni completi confermati; il risparmio è una simulazione, non una previsione garantita.
 
 ## Avvio locale
 
@@ -32,6 +36,7 @@ Prerequisiti: Node.js e npm; la CI usa Node.js 22. Per i test UI locali occorre 
 
 ```sh
 npm ci
+npm run build
 npm run preview
 ```
 
@@ -54,7 +59,7 @@ Chiudi l'anteprima con Ctrl+C prima di avviare i test UI: utilizzano la stessa p
 Il progetto configurato è `giwispikyzddqolrqwfz`; il piano Free è stato dichiarato dal titolare. La regione effettiva del database resta da confermare dalla dashboard.
 
 1. Configura URL e chiave pubblica in `supabase-config.js`. Non inserire una chiave amministrativa nel client.
-2. Esegui `supabase-schema.sql` nel SQL Editor del progetto corretto. Il titolare ha dichiarato di aver completato questo passaggio il 28 ottobre 2026.
+2. Esegui il nuovo `supabase-schema.sql` nel SQL Editor del progetto corretto. L’esecuzione dichiarata il 28 ottobre riguardava la versione precedente e non comprende la migrazione 1.2.
 3. Configura Site URL, redirect e invio email per l'ambiente di destinazione.
 4. Pubblica i file statici elencati in [RELEASE.md](RELEASE.md); lo script SQL si esegue sul database, non deve essere servito al browser.
 5. Per l'eliminazione automatica dell'account, pubblica e collauda separatamente la Edge Function prima di abilitare il relativo flag.
@@ -88,6 +93,6 @@ Le informazioni visibili agli utenti sono in [privacy.html](privacy.html) e [ter
 
 Non caricare `node_modules/`: è già esclusa da `.gitignore` e viene ricreata con `npm ci`. Nel repository conserva invece `package.json` e `package-lock.json`, insieme a codice, test, documentazione e workflow. Per pubblicare il sito statico segui l'elenco di `RELEASE.md`: il browser non richiede le dipendenze di sviluppo. Se carichi i file dall'interfaccia web di GitHub, escludi manualmente `node_modules/` dalla selezione: il caricamento web non applica automaticamente il tuo `.gitignore`.
 
-`index.html` contiene l'interfaccia; `style.css` lo stile; `app.js` archivio e flussi applicativi; `insights.js` i calcoli di Consapevolezza; `service-worker.js` la cache offline; `supabase-schema.sql` il database; `supabase/functions/delete-account/` la cancellazione account. Le dipendenze npm sono strumenti di sviluppo e test, non dipendenze runtime del sito.
+`index.html` contiene l’interfaccia; `src/` contiene i moduli da modificare. `npm run build` compone `app.js`, `insights.js`, `assets/css/app.css`, `service-worker.js` e `supabase-schema.sql`. Gli ultimi cinque file sono generati. La mappa delle responsabilità è in [ARCHITECTURE.md](docs/ARCHITECTURE.md). Le dipendenze npm sono strumenti di sviluppo e test, non dipendenze runtime del sito.
 
 Per assistenza indica dispositivo, browser, passaggi e risultato atteso. Non inviare password, token o backup personali. Per i problemi di email consulta la [guida SMTP Supabase](https://supabase.com/docs/guides/auth/auth-smtp): una richiesta accettata dal servizio non prova la consegna del messaggio.

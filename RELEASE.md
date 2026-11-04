@@ -1,4 +1,8 @@
-# SmokeLOG beta 1.1 — attivazione
+# SmokeLOG beta 1.2 — attivazione
+
+Per la versione corrente seguire [UPGRADE-1.2.md](docs/UPGRADE-1.2.md). Eseguire la nuova migrazione SQL prima del frontend: quella del 28 ottobre non comprende le nuove funzioni. La migrazione remota e il deploy 1.2 non sono stati eseguiti.
+
+## Procedura e contesto della precedente beta 1.1
 
 Stato al 28 ottobre 2026: il titolare ha confermato l'esecuzione dello schema SQL su Supabase. L'esito remoto non è stato verificato direttamente. La pubblicazione dei file statici e della Edge Function resta da confermare; nel codice locale `accountDeletionEnabled` è ancora `false`. Questa guida descrive anche i passaggi già eseguiti, per rendere ripetibile un rilascio.
 
@@ -8,7 +12,7 @@ Stato al 28 ottobre 2026: il titolare ha confermato l'esecuzione dello schema SQ
 2. Prova prima su un progetto Supabase di staging con account e dati fittizi.
 3. Esegui l'intero `supabase-schema.sql` nel SQL Editor. È rieseguibile e conserva i dati. Aggiunge revisioni, indici, trigger e `smokelog_changes`; mantiene RLS e la funzione di merge compatibile.
 4. Verifica con due account separati che lo storico resti isolato; con due dispositivi dello stesso account prova aggiunta, modifica, cancellazione, modalità offline e riconnessione.
-5. Pubblica i file statici: `index.html`, `app.js`, `insights.js`, `style.css`, `service-worker.js`, `supabase-config.js`, `privacy.html`, `terms.html`, manifest e icone. Non caricare `node_modules`.
+5. Pubblica i file statici: `index.html`, `app.js`, `insights.js`, `assets/`, `service-worker.js`, `supabase-config.js`, `privacy.html`, `terms.html`, manifest e icone. Non caricare `node_modules`.
 
 L'app funziona anche se il nuovo RPC non è ancora disponibile: torna alla lettura completa. Il download incrementale richiede lo schema aggiornato. Non resettare la sequenza delle revisioni e non rimuovere fisicamente singoli record dello storico durante il normale sync: le eliminazioni sono propagabili tramite `deleted_at`. L'eliminazione dell'account è un percorso separato.
 
@@ -40,7 +44,9 @@ Riferimenti verificati: [regioni Supabase](https://supabase.com/docs/guides/plat
 
 ## 4. Verifiche eseguite e limiti
 
-- Test automatici: reset categorie, migrazione guest, scritture concorrenti e rollback atomico, backup vecchi, download incrementale e fallback, calcoli e obiettivi, autorizzazione e fallimenti nella cancellazione account.
+- Collaudo locale 2 novembre 2026: `npm run check`, 26 test automatici/SQL e 4 scenari browser mobile/desktop superati; viewport mobile 320/375/390/430 px, offline e reduced motion inclusi.
+- Pacchetto statico pilota: `releases/smokelog-pwa-1.2-pilot-20261102.zip`, 13 file espliciti, senza `BACKUPS/`, storico personale o `node_modules/`. L'archivio `smokelog-pwa-1.2-site.zip` preesistente non contiene backup ma è precedente alle ultime modifiche: non usarlo per pubblicare questa build.
 - SQL eseguito due volte in PostgreSQL locale tramite PGlite: migrazione rieseguibile, RLS tra account, revisioni, cancellazioni, rifiuto del ripristino da record vecchi e cascata dopo eliminazione utente.
-- Browser Chrome: mobile e desktop, registrazione, persistenza dopo reload, obiettivi, simulatore, assenza di overflow e rispetto di reduced motion.
+- La configurazione client non contiene credenziali `service_role`; l'eliminazione account rimane disabilitata fino al deploy e collaudo della Edge Function.
 - Da verificare in staging: richieste reali PostgREST/Edge Functions, concorrenza tra connessioni PostgreSQL, invio email, storage reale e PWA Safari/iOS. PGlite verifica SQL e RLS, ma non simula l'intera infrastruttura Supabase né la concorrenza tra server.
+- Il pacchetto è un pilota locale, non una conferma di deploy o di rilascio pubblico: informativa/condizioni, regione Supabase, prova su dispositivi fisici e redesign completo restano da completare.

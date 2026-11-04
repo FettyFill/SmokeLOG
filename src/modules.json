@@ -1,0 +1,23 @@
+[
+  "core/state.js",
+  "core/network.js",
+  "data/wellness.js",
+  "account/profile.js",
+  "sync/cloud.js",
+  "sync/merge.js",
+  "sync/conflicts.js",
+  "account/session.js",
+  "data/database.js",
+  "ui/categories.js",
+  "ui/charts.js",
+  "ui/history.js",
+  "ui/navigation.js",
+  "ui/insights.js",
+  "ui/expenses.js",
+  "ui/records.js",
+  "data/backup.js",
+  "ui/settings.js",
+  "ui/events.js",
+  "ui/enhancements.js",
+  "bootstrap.js"
+]

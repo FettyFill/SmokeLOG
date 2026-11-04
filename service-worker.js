@@ -1,57 +1,28 @@
 'use strict';
-
-const CACHE_NAME = 'smokelog-shell-v39';
-const APP_SHELL = [
-  './',
-  './index.html',
-  './style.css',
-  './app.js',
-  './insights.js',
-  './privacy.html',
-  './terms.html',
-  './supabase-config.js',
-  './manifest.webmanifest',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/apple-touch-icon.png'
-];
-
+const CACHE_NAME = 'smokelog-shell-678e20bbc526';
+const APP_SHELL = ['./', './index.html', './assets/css/app.css', './app.js', './insights.js', './privacy.html', './terms.html', './supabase-config.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 self.addEventListener('install', event => {
-  // Scarica l'interfaccia essenziale prima di rendere attiva la nuova versione.
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
 });
-
+self.addEventListener('message', event => {
+  if (event.data?.type === 'ACTIVATE_UPDATE') self.skipWaiting();
+});
 self.addEventListener('activate', event => {
-  // Rimuove le cache delle versioni precedenti dopo l'attivazione della nuova shell.
-  event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(key => key.startsWith('smokelog-shell-') && key !== CACHE_NAME).map(key => caches.delete(key))))
-      .then(() => self.clients.claim())
-  );
+  event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('smokelog-shell-') && key !== CACHE_NAME).map(key => caches.delete(key)))).then(() => self.clients.claim()));
 });
-
 self.addEventListener('fetch', event => {
   const request = event.request;
-  if (request.method !== 'GET') return;
-
-  const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
-
-  // Preferisce i file aggiornati online e usa la cache se la rete non è disponibile.
+  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
-    try {
-      const response = await fetch(request);
-      if (response && response.ok) await cache.put(request, response.clone());
-      return response;
-    } catch (error) {
-      const cached = await cache.match(request) || await cache.match('./index.html');
-      if (cached) return cached;
-      throw error;
-    }
+    const url = new URL(request.url);
+    const cached = await cache.match(request, { ignoreSearch: true });
+    if (cached) return cached;
+    if (request.mode === 'navigate' && url.pathname === new URL('./', self.location.href).pathname) return (await cache.match('./index.html')) || Response.error();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try { return await fetch(request, { signal: controller.signal }); }
+    catch { return new Response('Risorsa non disponibile offline', { status: 503, headers: { 'Content-Type': 'text/plain' } }); }
+    finally { clearTimeout(timeout); }
   })());
 });

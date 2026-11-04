@@ -2,6 +2,24 @@
 
 Il registro descrive le modifiche del codice, non certifica che siano già pubblicate.
 
+## 1.2.0 — 30 ottobre 2026
+
+- Sorgenti separati per account, database, sincronizzazione, calcoli e interfaccia; CSS ordinato in sei moduli e build senza nuove dipendenze.
+- Collaudo pilota locale aggiornato il 2 novembre: 26 test automatici e SQL e 4 scenari browser mobile/desktop superati.
+- La simulazione di risparmio richiede almeno 14 giornate confermate su 28; i conteggi delle spese usano solo acquisti dei giorni confermati.
+- Le modifiche a consumi e acquisti rimuovono la conferma della giornata interessata e invitano a rivederla; l'importazione e l'annullamento seguono la stessa regola.
+- Le registrazioni storiche senza quantità restano sconosciute: editor e CSV non assegnano più automaticamente una quantità pari a uno.
+- L'intenzione "Smettere" non è proposta come percorso finché non è disponibile un programma dedicato; i dati legacy restano conservati e richiedono una scelta esplicita per aggiornare la preferenza.
+- Timeout cloud, codici errore preservati, controllo delle revisioni server e risoluzione esplicita dei conflitti.
+- Shell PWA coerente con aggiornamento richiesto dall’utente; nessun fallback HTML per risorse mancanti.
+- Annullamento rapido, inserimento retrodatato di consumi e acquisti, modifica di categoria/quantità/unità/importo e blocco date future.
+- Stato del salvataggio, aggiornamento dei totali al ritorno nell’app e al cambio di giorno anche senza account.
+- Percorsi osservare/ridurre/smettere, diario delle voglie, contesto/intensità facoltativi, esperimento settimanale e promemoria nell’app aperta.
+- Giorni confermati e copertura esplicita; confronti solo per periodi completi, nessun falso picco uniforme.
+- Backup v4 con dettagli e diario, obiettivi cloud, CSV arricchito; lettura dei backup precedenti.
+- Consapevolezza più compatta, obiettivi in alto, dettagli espandibili e campi mobile di almeno 16 px.
+- Verificati 24 test applicativi/SQL, 4 scenari browser mobile/desktop e sintassi. Restano da eseguire migrazione remota e prove su iPhone/Safari fisico.
+
 ## Beta 1.1 — 28 ottobre 2026
 
 ### Aggiunte
